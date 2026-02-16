@@ -1,0 +1,22 @@
+/target
+**/*.rs.bk
+*.swp
+*.swo
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+python/.venv/
+python/venv/
+
+# Audio test files
+*.wav
+*.mp3
+*.flac
+!python/test_*
+
+# IDE
+.idea/
+.vscode/

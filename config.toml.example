@@ -1,0 +1,31 @@
+[general]
+default_backend = "auto"           # auto, matchering, ai, local-ml
+default_bit_depth = 24
+default_format = "wav"
+target_lufs = -14.0
+
+[ai]
+default_provider = "ollama"
+
+[ai.ollama]
+endpoint = "http://localhost:11434"
+model = "llama3"
+
+[ai.keyhanstudio]
+endpoint = "https://api.keyhanstudio.com"
+api_key = ""
+
+[ai.openai]
+api_key = ""
+model = "gpt-4o"
+
+[ai.anthropic]
+api_key = ""
+model = "claude-sonnet-4-20250514"
+
+[backends.matchering]
+python_path = "python3"
+
+[backends.local_ml]
+python_path = "python3"
+default_model = "deepafx-st"

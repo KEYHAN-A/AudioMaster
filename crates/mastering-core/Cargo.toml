@@ -1,0 +1,25 @@
+[package]
+name = "mastering-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Core library for AI-powered music mastering"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+reqwest = { version = "0.12", features = ["json"] }
+tokio = { version = "1", features = ["full"] }
+symphonia = { version = "0.5", features = ["all"] }
+hound = "3.5"
+anyhow = "1"
+thiserror = "2"
+tracing = "0.1"
+indicatif = "0.17"
+dirs = "6"
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["full", "test-util"] }
+toml = "0.8"
