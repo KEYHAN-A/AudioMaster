@@ -1,0 +1,30 @@
+[package]
+name = "mastering-tauri"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Mastering Pro desktop application"
+
+[lib]
+name = "mastering_tauri_lib"
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[[bin]]
+name = "mastering-tauri"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+mastering-core = { path = "../crates/mastering-core" }
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-shell = "2"
+tauri-plugin-store = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+tracing = "0.1"
+env_logger = "0.11"

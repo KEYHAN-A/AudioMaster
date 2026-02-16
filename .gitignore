@@ -17,6 +17,11 @@ python/venv/
 *.flac
 !python/test_*
 
+# Node
+node_modules/
+dist/
+*.local
+
 # IDE
 .idea/
 .vscode/

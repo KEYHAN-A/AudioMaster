@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/mastering-core", "crates/mastering-cli"]
+members = ["crates/mastering-core", "crates/mastering-cli", "src-tauri"]
 resolver = "2"
 
 [workspace.package]
