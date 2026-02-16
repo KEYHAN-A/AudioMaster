@@ -1,4 +1,4 @@
-mod decode;
+pub mod decode;
 mod metrics;
 
 pub use decode::decode_audio;

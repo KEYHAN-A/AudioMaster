@@ -1,6 +1,4 @@
 <script setup>
-import { ref, watch } from "vue";
-
 const props = defineProps({
   visible: Boolean,
   presets: Array,
@@ -9,19 +7,6 @@ const props = defineProps({
 });
 
 const emit = defineEmits(["close", "master"]);
-
-const outputPath = ref("");
-
-watch(() => props.visible, (val) => {
-  if (val && props.state?.inputFile) {
-    const base = props.state.inputFile.replace(/\.[^.]+$/, "");
-    outputPath.value = `${base}_mastered.wav`;
-  }
-});
-
-function handleMaster() {
-  emit("master", outputPath.value || null);
-}
 </script>
 
 <template>
@@ -29,7 +14,7 @@ function handleMaster() {
     <div v-if="visible" class="dialog-overlay" @click.self="emit('close')">
       <div class="dialog" style="width: 560px;">
         <div class="dialog-header">
-          <h2 class="dialog-title gradient-text">Mastering Configuration</h2>
+          <h2 class="dialog-title gradient-text">Master {{ state.tracks?.length || 0 }} Track(s)</h2>
           <button class="close-btn" @click="emit('close')">&times;</button>
         </div>
 
@@ -82,7 +67,7 @@ function handleMaster() {
             </div>
           </div>
 
-          <!-- AI Provider (if AI backend) -->
+          <!-- AI Provider -->
           <Transition name="slide-up">
             <div v-if="state.selectedBackend === 'ai'" class="form-group">
               <label class="form-label">AI Provider</label>
@@ -95,18 +80,11 @@ function handleMaster() {
             </div>
           </Transition>
 
-          <!-- Target LUFS & bit depth -->
+          <!-- Settings row -->
           <div class="form-row">
             <div class="form-group" style="flex: 1;">
               <label class="form-label">Target LUFS</label>
-              <input
-                type="number"
-                class="form-input"
-                v-model.number="state.targetLufs"
-                min="-30"
-                max="-5"
-                step="0.5"
-              />
+              <input type="number" class="form-input" v-model.number="state.targetLufs" min="-30" max="-5" step="0.5" />
             </div>
             <div class="form-group" style="flex: 1;">
               <label class="form-label">Bit Depth</label>
@@ -126,29 +104,17 @@ function handleMaster() {
             </div>
           </div>
 
-          <!-- Options -->
           <div class="form-group">
             <label class="toggle-label">
               <input type="checkbox" v-model="state.noLimiter" />
               <span class="toggle-text">Disable limiter</span>
             </label>
           </div>
-
-          <!-- Output path -->
-          <div class="form-group">
-            <label class="form-label">Output Path</label>
-            <input
-              type="text"
-              class="form-input mono"
-              v-model="outputPath"
-              placeholder="Auto-generated"
-            />
-          </div>
         </div>
 
         <div class="dialog-footer">
           <button class="btn btn-ghost" @click="emit('close')">Cancel</button>
-          <button class="btn btn-primary" @click="handleMaster">
+          <button class="btn btn-primary" @click="emit('master')">
             Start Mastering
           </button>
         </div>
@@ -160,114 +126,37 @@ function handleMaster() {
 <style scoped>
 .dialog-body { display: flex; flex-direction: column; gap: 4px; }
 
-.preset-grid {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 8px;
-}
+.preset-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
 
 .preset-card {
-  padding: 10px;
-  border-radius: 10px;
-  border: 1px solid var(--border-light);
-  background: var(--bg-input);
-  cursor: pointer;
-  text-align: center;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  transition: all 0.2s ease;
+  padding: 10px; border-radius: 10px; border: 1px solid var(--border-light);
+  background: var(--bg-input); cursor: pointer; text-align: center;
+  display: flex; flex-direction: column; gap: 4px; transition: all 0.2s ease;
 }
-
 .preset-card:hover { border-color: var(--cyan); }
-.preset-card.active {
-  border-color: var(--cyan);
-  background-color: var(--cyan-subtle);
-}
+.preset-card.active { border-color: var(--cyan); background-color: var(--cyan-subtle); }
+.preset-name { font-size: 12px; font-weight: 700; color: var(--text-bright); text-transform: capitalize; }
+.preset-lufs { font-size: 13px; font-weight: 700; font-family: var(--font-mono); color: var(--cyan); }
+.preset-desc { font-size: 10px; color: var(--text-muted); }
 
-.preset-name {
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--text-bright);
-  text-transform: capitalize;
-}
-
-.preset-lufs {
-  font-size: 13px;
-  font-weight: 700;
-  font-family: var(--font-mono);
-  color: var(--cyan);
-}
-
-.preset-desc {
-  font-size: 10px;
-  color: var(--text-muted);
-}
-
-.backend-grid {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 8px;
-}
+.backend-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
 
 .backend-card {
-  padding: 10px;
-  border-radius: 10px;
-  border: 1px solid var(--border-light);
-  background: var(--bg-input);
-  cursor: pointer;
-  text-align: center;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  transition: all 0.2s ease;
+  padding: 10px; border-radius: 10px; border: 1px solid var(--border-light);
+  background: var(--bg-input); cursor: pointer; text-align: center;
+  display: flex; flex-direction: column; gap: 4px; transition: all 0.2s ease;
 }
-
 .backend-card:hover:not(.unavailable) { border-color: var(--cyan); }
-.backend-card.active {
-  border-color: var(--cyan);
-  background-color: var(--cyan-subtle);
-}
-.backend-card.unavailable {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.backend-name {
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--text-bright);
-}
-
-.backend-status {
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--danger);
-}
-
+.backend-card.active { border-color: var(--cyan); background-color: var(--cyan-subtle); }
+.backend-card.unavailable { opacity: 0.5; cursor: not-allowed; }
+.backend-name { font-size: 12px; font-weight: 700; color: var(--text-bright); }
+.backend-status { font-size: 10px; font-weight: 600; color: var(--danger); }
 .backend-status.ok { color: var(--success); }
 .backend-desc { font-size: 10px; color: var(--text-muted); }
 
-.form-row {
-  display: flex;
-  gap: 12px;
-}
+.form-row { display: flex; gap: 12px; }
 
-.toggle-label {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  cursor: pointer;
-}
-
-.toggle-label input {
-  accent-color: var(--cyan);
-}
-
-.toggle-text {
-  font-size: 12px;
-  color: var(--text);
-}
-
-.mono { font-family: var(--font-mono); font-size: 11px; }
+.toggle-label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.toggle-label input { accent-color: var(--cyan); }
+.toggle-text { font-size: 12px; color: var(--text); }
 </style>

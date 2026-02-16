@@ -1,12 +1,8 @@
 <script setup>
-import { computed } from "vue";
-
 const props = defineProps({
   analysis: Object,
-  masterResult: Object,
+  postAnalysis: Object,
 });
-
-const postAnalysis = computed(() => props.masterResult?.post_analysis);
 
 function lufsClass(value) {
   if (value > -10) return "hot";
@@ -23,7 +19,7 @@ function dbDisplay(value) {
   <div class="analysis-panel">
     <div class="metrics-strip stagger-enter">
       <div class="metric-card">
-        <span class="metric-label">LUFS Integrated</span>
+        <span class="metric-label">LUFS Int.</span>
         <span class="metric-value" :class="lufsClass(analysis.lufs_integrated)">
           {{ dbDisplay(analysis.lufs_integrated) }}
         </span>
@@ -33,7 +29,7 @@ function dbDisplay(value) {
       </div>
 
       <div class="metric-card">
-        <span class="metric-label">LUFS Short-Term Max</span>
+        <span class="metric-label">LUFS ST Max</span>
         <span class="metric-value">{{ dbDisplay(analysis.lufs_short_term_max) }}</span>
         <span v-if="postAnalysis" class="metric-after">
           {{ dbDisplay(postAnalysis.lufs_short_term_max) }}
@@ -69,7 +65,7 @@ function dbDisplay(value) {
       </div>
 
       <div class="metric-card">
-        <span class="metric-label">Dynamic Range</span>
+        <span class="metric-label">DR</span>
         <span class="metric-value cool">{{ dbDisplay(analysis.dynamic_range_db) }} dB</span>
         <span v-if="postAnalysis" class="metric-after">
           {{ dbDisplay(postAnalysis.dynamic_range_db) }} dB
@@ -77,7 +73,7 @@ function dbDisplay(value) {
       </div>
 
       <div class="metric-card">
-        <span class="metric-label">Stereo Width</span>
+        <span class="metric-label">Width</span>
         <span class="metric-value">{{ (analysis.stereo_width * 100).toFixed(0) }}%</span>
         <span v-if="postAnalysis" class="metric-after">
           {{ (postAnalysis.stereo_width * 100).toFixed(0) }}%
@@ -89,37 +85,36 @@ function dbDisplay(value) {
 
 <style scoped>
 .analysis-panel {
-  padding: 12px 16px;
+  padding: 8px 12px;
   border-top: 1px solid var(--border-subtle);
   background: rgba(17, 24, 39, 0.5);
   overflow-x: auto;
+  flex-shrink: 0;
 }
 
 .metrics-strip {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   min-width: min-content;
 }
 
 .metric-card {
   flex: 1;
-  min-width: 100px;
-  padding: 10px 12px;
+  min-width: 90px;
+  padding: 8px 10px;
   border-radius: 10px;
   background-color: var(--bg-input);
   border: 1px solid var(--border);
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 3px;
   transition: border-color 0.2s ease;
 }
 
-.metric-card:hover {
-  border-color: var(--border-light);
-}
+.metric-card:hover { border-color: var(--border-light); }
 
 .metric-label {
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -127,7 +122,7 @@ function dbDisplay(value) {
 }
 
 .metric-value {
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 700;
   font-family: var(--font-mono);
   color: var(--cyan);
@@ -138,7 +133,7 @@ function dbDisplay(value) {
 .metric-value.cool { color: var(--success); }
 
 .metric-after {
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 600;
   font-family: var(--font-mono);
   color: var(--purple);

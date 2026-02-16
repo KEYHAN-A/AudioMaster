@@ -2,6 +2,7 @@
 defineProps({
   visible: Boolean,
   message: String,
+  progress: { type: Number, default: 0 },
 });
 </script>
 
@@ -16,9 +17,13 @@ defineProps({
         </div>
         <h3 class="processing-title gradient-text">Processing</h3>
         <p class="processing-message">{{ message || "Working..." }}</p>
-        <div class="progress-bar" style="width: 200px;">
-          <div class="progress-bar-fill" style="width: 100%;"></div>
+        <div class="progress-bar" style="width: 220px;">
+          <div
+            class="progress-bar-fill"
+            :style="{ width: progress > 0 ? progress + '%' : '100%' }"
+          ></div>
         </div>
+        <span v-if="progress > 0" class="progress-pct">{{ Math.round(progress) }}%</span>
       </div>
     </div>
   </Transition>
@@ -30,42 +35,28 @@ defineProps({
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 16px;
+  gap: 14px;
   text-align: center;
 }
 
-.processing-anim {
-  width: 64px;
-  height: 64px;
-  position: relative;
-}
+.processing-anim { width: 64px; height: 64px; position: relative; }
 
 .ring-outer {
-  width: 100%;
-  height: 100%;
+  width: 100%; height: 100%;
   border-radius: 50%;
   border: 2px solid var(--border-subtle);
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  display: flex; align-items: center; justify-content: center;
 }
 
 .ring-inner {
-  width: 48px;
-  height: 48px;
+  width: 48px; height: 48px;
   border-radius: 50%;
   border: 3px solid transparent;
   border-top-color: var(--cyan);
   border-right-color: var(--purple);
 }
 
-.processing-title {
-  font-size: 18px;
-  font-weight: 800;
-}
-
-.processing-message {
-  color: var(--text-dim);
-  font-size: 13px;
-}
+.processing-title { font-size: 18px; font-weight: 800; }
+.processing-message { color: var(--text-dim); font-size: 13px; }
+.progress-pct { font-size: 11px; color: var(--text-muted); font-family: var(--font-mono); }
 </style>

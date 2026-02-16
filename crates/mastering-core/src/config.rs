@@ -276,26 +276,50 @@ impl Config {
     }
 
     pub fn python_scripts_dir() -> PathBuf {
+        // 1. Explicit env var (set by Tauri app or user)
+        if let Ok(dir) = std::env::var("MASTERING_PROJECT_DIR") {
+            let base = PathBuf::from(&dir);
+            // Direct python/ subfolder
+            let p = base.join("python");
+            if p.exists() {
+                return p;
+            }
+            // Tauri bundles ../python as _up_/python
+            let up = base.join("_up_").join("python");
+            if up.exists() {
+                return up;
+            }
+        }
+
         let exe = std::env::current_exe().unwrap_or_default();
         let exe_dir = exe.parent().unwrap_or(Path::new("."));
 
-        // Check next to the binary first
+        // 2. macOS .app bundle: Contents/Resources/python
+        let resources = exe_dir.join("../Resources/python");
+        if resources.exists() {
+            return resources;
+        }
+
+        // 3. Next to the binary
         let beside_exe = exe_dir.join("python");
         if beside_exe.exists() {
             return beside_exe;
         }
 
-        // Check in workspace dev layout
-        let workspace = exe_dir
-            .join("..")
-            .join("..")
-            .join("..")
-            .join("python");
-        if workspace.exists() {
-            return workspace;
+        // 4. Workspace dev layout (cargo build from root)
+        for depth in &["../../..", "../.."] {
+            let workspace = exe_dir.join(depth).join("python");
+            if workspace.exists() {
+                return workspace;
+            }
         }
 
-        // Fallback: current working directory
+        // 5. Current working directory
+        let cwd = std::env::current_dir().unwrap_or_default().join("python");
+        if cwd.exists() {
+            return cwd;
+        }
+
         PathBuf::from("python")
     }
 }
