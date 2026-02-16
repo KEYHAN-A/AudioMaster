@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0a0e1a"/>
+      <stop offset="100%" stop-color="#050816"/>
+    </linearGradient>
+    <linearGradient id="barGrad" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0%" stop-color="#0ea5e9"/>
+      <stop offset="50%" stop-color="#38bdf8"/>
+      <stop offset="85%" stop-color="#a78bfa"/>
+      <stop offset="100%" stop-color="#f472b6"/>
+    </linearGradient>
+    <linearGradient id="knobRing" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#38bdf8"/>
+      <stop offset="100%" stop-color="#a78bfa"/>
+    </linearGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="8" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  <!-- Background rounded square -->
+  <rect width="512" height="512" rx="108" ry="108" fill="url(#bg)"/>
+  <rect width="512" height="512" rx="108" ry="108" fill="none" stroke="rgba(56,189,248,0.15)" stroke-width="2"/>
+  <!-- Mastering level bars -->
+  <g filter="url(#glow)" opacity="0.9">
+    <!-- 7 bars representing frequency bands / levels -->
+    <rect x="88"  y="310" width="32" height="80"  rx="6" fill="url(#barGrad)" opacity="0.7"/>
+    <rect x="138" y="250" width="32" height="140" rx="6" fill="url(#barGrad)" opacity="0.8"/>
+    <rect x="188" y="180" width="32" height="210" rx="6" fill="url(#barGrad)" opacity="0.85"/>
+    <rect x="238" y="140" width="32" height="250" rx="6" fill="url(#barGrad)" opacity="0.95"/>
+    <rect x="288" y="170" width="32" height="220" rx="6" fill="url(#barGrad)" opacity="0.9"/>
+    <rect x="338" y="220" width="32" height="170" rx="6" fill="url(#barGrad)" opacity="0.8"/>
+    <rect x="388" y="280" width="32" height="110" rx="6" fill="url(#barGrad)" opacity="0.7"/>
+  </g>
+  <!-- Mastering knob (center overlay) -->
+  <circle cx="256" cy="120" r="44" fill="none" stroke="url(#knobRing)" stroke-width="4" opacity="0.6"/>
+  <circle cx="256" cy="120" r="30" fill="#151c2e" stroke="rgba(56,189,248,0.3)" stroke-width="2"/>
+  <!-- Knob indicator -->
+  <line x1="256" y1="96" x2="256" y2="106" stroke="#38bdf8" stroke-width="3" stroke-linecap="round"/>
+  <!-- Tick marks around knob -->
+  <g stroke="rgba(56,189,248,0.3)" stroke-width="1.5" stroke-linecap="round">
+    <line x1="220" y1="140" x2="226" y2="136"/>
+    <line x1="216" y1="120" x2="222" y2="120"/>
+    <line x1="220" y1="100" x2="226" y2="104"/>
+    <line x1="292" y1="140" x2="286" y2="136"/>
+    <line x1="296" y1="120" x2="290" y2="120"/>
+    <line x1="292" y1="100" x2="286" y2="104"/>
+  </g>
+</svg>
