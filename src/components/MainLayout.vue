@@ -159,7 +159,7 @@ function handleDrop(e) {
                 <path stroke-linecap="round" stroke-linejoin="round" d="M9 9l10.5-3m0 6.553v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 11-.99-3.467l2.31-.66a2.25 2.25 0 001.632-2.163zm0 0V2.34A1.154 1.154 0 0017.882 1.2l-5.764 1.648A1.154 1.154 0 0011 3.996V14.5" />
               </svg>
             </div>
-            <h1 class="empty-title gradient-text">Mastering Pro</h1>
+            <h1 class="empty-title gradient-text">AudioMaster</h1>
             <p class="empty-subtitle">AI-powered audio mastering</p>
 
             <button class="btn btn-primary empty-import" @click="openFilePicker">
@@ -268,7 +268,7 @@ function handleDrop(e) {
 
           <!-- Status bar -->
           <div class="status-bar">
-            <span class="status-text">Mastering Pro v1.0.0</span>
+            <span class="status-text">AudioMaster v1.0.0</span>
             <span class="status-text">
               {{ state.tracks.length }} track{{ state.tracks.length !== 1 ? 's' : '' }}
             </span>

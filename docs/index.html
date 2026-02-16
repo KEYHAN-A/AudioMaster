@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AudioMaster — AI-Powered Music Mastering</title>
+  <meta name="description" content="AudioMaster is a free, open-source AI-powered music mastering desktop application built with Rust and Tauri.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg-deep: #050816;
+      --bg-card: rgba(15, 23, 42, 0.6);
+      --border: rgba(99, 102, 241, 0.15);
+      --text: #e2e8f0;
+      --text-dim: #94a3b8;
+      --accent: #818cf8;
+      --accent-bright: #a5b4fc;
+      --gradient: linear-gradient(135deg, #818cf8, #c084fc, #f472b6);
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, sans-serif;
+      background: var(--bg-deep);
+      color: var(--text);
+      line-height: 1.6;
+      overflow-x: hidden;
+    }
+
+    .glow-orb {
+      position: fixed;
+      border-radius: 50%;
+      filter: blur(120px);
+      opacity: 0.15;
+      pointer-events: none;
+      z-index: 0;
+    }
+    .glow-orb.purple { width: 600px; height: 600px; background: #818cf8; top: -200px; right: -100px; }
+    .glow-orb.pink { width: 500px; height: 500px; background: #f472b6; bottom: 10%; left: -150px; }
+    .glow-orb.blue { width: 400px; height: 400px; background: #38bdf8; bottom: -100px; right: 20%; }
+
+    .container { max-width: 1100px; margin: 0 auto; padding: 0 24px; position: relative; z-index: 1; }
+
+    /* NAV */
+    nav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 20px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .logo {
+      font-size: 1.25rem;
+      font-weight: 700;
+      background: var(--gradient);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    nav a {
+      color: var(--text-dim);
+      text-decoration: none;
+      font-size: 0.9rem;
+      font-weight: 500;
+      transition: color 0.2s;
+    }
+    nav a:hover { color: var(--text); }
+    .nav-links { display: flex; gap: 28px; align-items: center; }
+
+    /* HERO */
+    .hero {
+      text-align: center;
+      padding: 100px 0 60px;
+    }
+    .badge {
+      display: inline-block;
+      padding: 6px 16px;
+      border-radius: 20px;
+      border: 1px solid var(--border);
+      background: var(--bg-card);
+      font-size: 0.8rem;
+      color: var(--accent-bright);
+      margin-bottom: 24px;
+      backdrop-filter: blur(12px);
+    }
+    .hero h1 {
+      font-size: clamp(2.5rem, 6vw, 4rem);
+      font-weight: 800;
+      line-height: 1.1;
+      margin-bottom: 20px;
+    }
+    .hero h1 .gradient {
+      background: var(--gradient);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .hero p {
+      font-size: 1.15rem;
+      color: var(--text-dim);
+      max-width: 600px;
+      margin: 0 auto 36px;
+    }
+    .btn-row { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 14px 28px;
+      border-radius: 12px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      text-decoration: none;
+      transition: all 0.2s;
+      cursor: pointer;
+      border: none;
+    }
+    .btn-primary {
+      background: var(--gradient);
+      color: #fff;
+      box-shadow: 0 4px 24px rgba(129, 140, 248, 0.3);
+    }
+    .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 6px 32px rgba(129, 140, 248, 0.45); }
+    .btn-secondary {
+      background: var(--bg-card);
+      color: var(--text);
+      border: 1px solid var(--border);
+      backdrop-filter: blur(12px);
+    }
+    .btn-secondary:hover { border-color: var(--accent); }
+
+    /* SCREENSHOT */
+    .screenshot-wrap {
+      margin: 60px auto 0;
+      max-width: 900px;
+      border-radius: 16px;
+      border: 1px solid var(--border);
+      overflow: hidden;
+      background: var(--bg-card);
+      box-shadow: 0 20px 80px rgba(0,0,0,0.5);
+    }
+    .screenshot-wrap img {
+      width: 100%;
+      display: block;
+    }
+    .screenshot-placeholder {
+      padding: 120px 40px;
+      text-align: center;
+      color: var(--text-dim);
+      font-size: 0.95rem;
+    }
+
+    /* FEATURES */
+    .features {
+      padding: 100px 0;
+    }
+    .section-title {
+      text-align: center;
+      font-size: 2rem;
+      font-weight: 700;
+      margin-bottom: 12px;
+    }
+    .section-subtitle {
+      text-align: center;
+      color: var(--text-dim);
+      max-width: 550px;
+      margin: 0 auto 48px;
+    }
+    .feature-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 20px;
+    }
+    .feature-card {
+      padding: 28px;
+      border-radius: 16px;
+      border: 1px solid var(--border);
+      background: var(--bg-card);
+      backdrop-filter: blur(12px);
+      transition: border-color 0.3s, transform 0.3s;
+    }
+    .feature-card:hover { border-color: var(--accent); transform: translateY(-4px); }
+    .feature-icon {
+      width: 44px;
+      height: 44px;
+      border-radius: 10px;
+      background: rgba(129, 140, 248, 0.1);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 16px;
+      color: var(--accent);
+    }
+    .feature-card h3 { font-size: 1.05rem; margin-bottom: 8px; }
+    .feature-card p { color: var(--text-dim); font-size: 0.9rem; }
+
+    /* INSTALL */
+    .install {
+      padding: 80px 0;
+      border-top: 1px solid var(--border);
+    }
+    .install-steps {
+      max-width: 650px;
+      margin: 0 auto;
+    }
+    .code-block {
+      background: rgba(15, 23, 42, 0.8);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px 24px;
+      margin: 16px 0;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.85rem;
+      color: var(--accent-bright);
+      overflow-x: auto;
+      line-height: 1.8;
+    }
+    .install-steps h3 {
+      margin-top: 28px;
+      margin-bottom: 4px;
+      font-size: 1rem;
+      color: var(--text);
+    }
+    .install-steps p {
+      color: var(--text-dim);
+      font-size: 0.9rem;
+    }
+
+    /* FOOTER */
+    footer {
+      padding: 40px 0;
+      border-top: 1px solid var(--border);
+      text-align: center;
+      color: var(--text-dim);
+      font-size: 0.85rem;
+    }
+    footer a { color: var(--accent-bright); text-decoration: none; }
+    footer a:hover { text-decoration: underline; }
+    .footer-links { display: flex; gap: 24px; justify-content: center; margin-bottom: 12px; }
+
+    @media (max-width: 640px) {
+      .hero { padding: 60px 0 40px; }
+      .features { padding: 60px 0; }
+      .nav-links { gap: 16px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="glow-orb purple"></div>
+  <div class="glow-orb pink"></div>
+  <div class="glow-orb blue"></div>
+
+  <div class="container">
+    <nav>
+      <span class="logo">AudioMaster</span>
+      <div class="nav-links">
+        <a href="#features">Features</a>
+        <a href="#install">Install</a>
+        <a href="https://github.com/KEYHAN-A/AudioMaster">GitHub</a>
+      </div>
+    </nav>
+
+    <section class="hero">
+      <span class="badge">v1.0.0 &mdash; Free &amp; Open Source</span>
+      <h1>AI-Powered<br><span class="gradient">Music Mastering</span></h1>
+      <p>Professional-quality masters from your desktop. Intelligent audio analysis, multiple backends, real-time visualizations &mdash; all in one lightweight app.</p>
+      <div class="btn-row">
+        <a class="btn btn-primary" href="https://github.com/KEYHAN-A/AudioMaster/releases/latest">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5 5-5M12 15V3"/></svg>
+          Download for macOS
+        </a>
+        <a class="btn btn-secondary" href="https://github.com/KEYHAN-A/AudioMaster">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.3 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61-.546-1.385-1.333-1.754-1.333-1.754-1.09-.745.083-.73.083-.73 1.205.085 1.84 1.237 1.84 1.237 1.07 1.834 2.807 1.304 3.492.997.108-.776.418-1.305.762-1.605-2.665-.3-5.467-1.332-5.467-5.93 0-1.31.468-2.382 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.838 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.605-.015 2.896-.015 3.286 0 .315.21.694.825.576C20.565 21.795 24 17.295 24 12c0-6.63-5.37-12-12-12z"/></svg>
+          View Source
+        </a>
+      </div>
+
+      <div class="screenshot-wrap">
+        <div class="screenshot-placeholder">
+          Screenshot coming soon &mdash; run the app to see the glassmorphism UI in action
+        </div>
+      </div>
+    </section>
+
+    <section class="features" id="features">
+      <h2 class="section-title">Features</h2>
+      <p class="section-subtitle">Everything you need to master your music, powered by AI and built with performance in mind.</p>
+
+      <div class="feature-grid">
+        <div class="feature-card">
+          <div class="feature-icon">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9.75 3.104v5.714a2.25 2.25 0 01-.659 1.591L5 14.5M9.75 3.104c-.251.023-.501.05-.75.082m.75-.082a24.301 24.301 0 014.5 0m0 0v5.714c0 .597.237 1.17.659 1.591L19.8 15.3M14.25 3.104c.251.023.501.05.75.082M19.8 15.3l-1.57.393A9.065 9.065 0 0112 15a9.065 9.065 0 00-6.23.693L5 14.5m14.8.8l1.402 1.402c1.232 1.232.65 3.318-1.067 3.611A48.309 48.309 0 0112 21c-2.773 0-5.491-.235-8.135-.687-1.718-.293-2.3-2.379-1.067-3.61L5 14.5"/></svg>
+          </div>
+          <h3>AI-Powered Mastering</h3>
+          <p>Choose from Ollama (local), OpenAI, Anthropic, or KeyhanStudio AI backends to intelligently generate mastering parameters.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 9l10.5-3m0 6.553v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 11-.99-3.467l2.31-.66a2.25 2.25 0 001.632-2.163zm0 0V2.34A1.154 1.154 0 0017.882 1.2l-5.764 1.648A1.154 1.154 0 0011 3.996V14.5"/></svg>
+          </div>
+          <h3>Reference-Based Mastering</h3>
+          <p>Use Matchering to match your track's loudness, EQ, and dynamics to any reference recording.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z"/></svg>
+          </div>
+          <h3>Real-Time Visualizations</h3>
+          <p>Waveform display, LUFS loudness meters, and 7-band spectrum analyzer with before/after comparison.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 9.776c.112-.017.227-.026.344-.026h15.812c.117 0 .232.009.344.026m-16.5 0a2.25 2.25 0 00-1.883 2.542l.857 6a2.25 2.25 0 002.227 1.932H19.05a2.25 2.25 0 002.227-1.932l.857-6a2.25 2.25 0 00-1.883-2.542m-16.5 0V6A2.25 2.25 0 016 3.75h3.879a1.5 1.5 0 011.06.44l2.122 2.12a1.5 1.5 0 001.06.44H18A2.25 2.25 0 0120.25 9v.776"/></svg>
+          </div>
+          <h3>Batch Processing</h3>
+          <p>Import multiple tracks and master them all in one go with Analyze All and Master All.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M10.5 6h9.75M10.5 6a1.5 1.5 0 11-3 0m3 0a1.5 1.5 0 10-3 0M3.75 6H7.5m3 12h9.75m-9.75 0a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m-3.75 0H7.5m9-6h3.75m-3.75 0a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m-9.75 0h9.75"/></svg>
+          </div>
+          <h3>Configurable Presets</h3>
+          <p>Streaming, CD, Vinyl, and Loud presets with adjustable target LUFS, ceiling, and stereo width.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6.75 7.5l3 2.25-3 2.25m4.5 0h3m-9 8.25h13.5A2.25 2.25 0 0021 18V6a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 6v12a2.25 2.25 0 002.25 2.25z"/></svg>
+          </div>
+          <h3>CLI Tool</h3>
+          <p>Full command-line interface for scriptable mastering workflows, analysis, and batch operations.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="install" id="install">
+      <h2 class="section-title">Installation</h2>
+      <p class="section-subtitle">Get up and running in minutes.</p>
+
+      <div class="install-steps">
+        <h3>Prerequisites</h3>
+        <p>Rust 1.70+, Node.js 18+, Python 3.8+, FFmpeg</p>
+
+        <h3>Quick Start</h3>
+        <div class="code-block">
+          git clone https://github.com/KEYHAN-A/AudioMaster.git<br>
+          cd AudioMaster<br>
+          npm install<br>
+          pip install -r python/requirements.txt<br>
+          npx tauri dev
+        </div>
+
+        <h3>Download Pre-Built</h3>
+        <p>Grab the latest DMG from the <a href="https://github.com/KEYHAN-A/AudioMaster/releases/latest" style="color: var(--accent-bright);">Releases</a> page.</p>
+      </div>
+    </section>
+
+    <footer>
+      <div class="footer-links">
+        <a href="https://github.com/KEYHAN-A/AudioMaster">GitHub</a>
+        <a href="https://github.com/KEYHAN-A/AudioMaster/releases">Releases</a>
+        <a href="https://github.com/KEYHAN-A/AudioMaster/blob/main/LICENSE">License (GPL-3.0)</a>
+        <a href="https://github.com/KEYHAN-A/AudioMaster/blob/main/CONTRIBUTING.md">Contributing</a>
+      </div>
+      <p>&copy; 2026 KEYHAN-A &mdash; AudioMaster is free and open-source software.</p>
+    </footer>
+  </div>
+</body>
+</html>

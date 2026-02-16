@@ -3,7 +3,7 @@ name = "mastering-tauri"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Mastering Pro desktop application"
+description = "AudioMaster - AI-powered music mastering desktop app"
 
 [lib]
 name = "mastering_tauri_lib"
