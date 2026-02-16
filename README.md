@@ -1,100 +1,224 @@
 # AudioMaster
 
-**AudioMaster** is a powerful, open-source AI-powered music mastering application. It is built for musicians, producers, and audio engineers who want professional-quality masters using intelligent audio analysis, multiple mastering backends, and a beautiful desktop interface.
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
+[![GitHub](https://img.shields.io/badge/GitHub-KEYHAN--A%2FAudioMaster-181717?logo=github)](https://github.com/KEYHAN-A/AudioMaster)
+[![Version](https://img.shields.io/badge/version-1.0.0-38bdf8)](https://github.com/KEYHAN-A/AudioMaster/releases)
+[![Platform](https://img.shields.io/badge/platform-macOS-a78bfa)]()
+[![Website](https://img.shields.io/badge/website-audiomaster.keyhan.info-38bdf8)](https://audiomaster.keyhan.info)
+[![CI](https://github.com/KEYHAN-A/AudioMaster/actions/workflows/ci.yml/badge.svg)](https://github.com/KEYHAN-A/AudioMaster/actions/workflows/ci.yml)
 
-![AudioMaster Screenshot](https://imgur.com/placeholder.png)
+AI-powered music mastering with real-time visualizations, batch processing, and multiple AI backends. Built with **Rust** and **Tauri v2** for native performance.
 
-## Features
+**Free and open source.** [Website](https://audiomaster.keyhan.info) | [Download](https://github.com/KEYHAN-A/AudioMaster/releases) | [Report Issue](https://github.com/KEYHAN-A/AudioMaster/issues)
 
-- **AI-Powered Mastering**: Leverage AI backends (Ollama, OpenAI, Anthropic, KeyhanStudio) to generate optimal mastering parameters from audio analysis.
-- **Reference-Based Mastering**: Use [Matchering](https://github.com/sergree/matchering) to match your track's loudness, EQ, and dynamics to a reference track.
-- **Real-Time Visualizations**: Waveform display, LUFS loudness meters, and 7-band spectrum analyzer with before/after comparison.
-- **Batch Processing**: Import multiple tracks and master them all in one go with Analyze All / Master All.
-- **Configurable Presets**: Streaming, CD, Vinyl, and Loud presets with customizable target LUFS, ceiling, and stereo width.
-- **Native Audio Analysis**: Integrated LUFS, RMS, Peak, True Peak, Dynamic Range, Stereo Width, and Frequency Band analysis — all in Rust.
-- **CLI Tool**: Full-featured command-line interface (`mastering-cli`) for scriptable mastering workflows.
-- **Cross-Platform Desktop App**: Built with [Tauri v2](https://tauri.app/) for a lightweight, native experience.
-- **Fast Performance**: Rust core library with zero-copy audio decoding via [Symphonia](https://github.com/pdeljanov/Symphonia).
+---
 
-## Installation
+![AudioMaster Screenshot](screenshot.png)
 
-### Prerequisites
-- [Rust](https://rustup.rs/) 1.70+
-- [Node.js](https://nodejs.org/) 18+ and npm
-- [Python](https://www.python.org/) 3.8+ (for Matchering and effects backends)
-- [FFmpeg](https://ffmpeg.org/) (must be installed and in your system PATH)
+---
 
-### Dependencies
+## What It Does
 
-Install the Python requirements for the mastering backends:
+You have a track — or an entire album — that needs mastering. AudioMaster analyzes your audio (LUFS, dynamic range, stereo width, frequency balance), sends the analysis to an AI backend or Matchering engine, applies the recommended processing, and exports a mastered file. Batch-process a full album in one click.
+
+### Key Features
+
+- **AI-powered mastering** — Ollama (local), OpenAI, Anthropic, or KeyhanStudio backends
+- **Reference-based mastering** — Matchering matches loudness, EQ, and dynamics to any reference track
+- **Real-time visualizations** — Waveform, LUFS meters, 7-band spectrum analyzer with before/after
+- **Batch processing** — Import multiple tracks, Analyze All, Master All
+- **Configurable presets** — Streaming (-14 LUFS), CD (-9), Vinyl (-12), Loud (-6)
+- **Native audio analysis** — LUFS, RMS, Peak, True Peak, Dynamic Range, Stereo Width, Frequency Bands
+- **CLI tool** — Full command-line interface for scripting and automation
+- **Cloud save** — Save presets to the cloud via Keyhan Studio account (optional)
+- **Cross-platform** — macOS (Windows and Linux coming soon)
+
+---
+
+## Two Ways to Use AudioMaster
+
+### 1. Desktop App (Tauri v2 + Vue 3)
+
+The full GUI experience with glassmorphism UI, drag-and-drop, and real-time visualizations.
+
 ```bash
-pip install -r python/requirements.txt
+# Build and run
+npm install
+npx tauri dev
 ```
 
-### Build from Source
+**Features:** Glassmorphism dark UI, waveform canvas, LUFS meter bars, spectrum analyzer, batch track list, before/after comparison, configurable presets, settings dialog, drag-and-drop import.
+
+### 2. Rust CLI
+
+Headless command-line tool for servers, pipelines, and automation.
 
 ```bash
-# Clone the repository
-git clone https://github.com/KEYHAN-A/AudioMaster.git
-cd AudioMaster
+# Build the CLI
+cargo build --release -p mastering-cli
 
+# Analyze a file
+./target/release/mastering analyze input.wav
+
+# Master with default settings
+./target/release/mastering master input.wav -o output.wav
+
+# Master with a reference track
+./target/release/mastering master input.wav -o output.wav --reference ref.wav
+
+# Use a specific backend
+./target/release/mastering master input.wav -o output.wav --backend matchering
+```
+
+**Flags:** `--backend` (matchering/ai/local-ml), `--preset` (streaming/cd/vinyl/loud), `--reference`, `--target-lufs`, `--output`.
+
+---
+
+## Architecture
+
+```
+AudioMaster/
+├── crates/
+│   ├── mastering-core/      # Rust library — analysis, backends, pipeline
+│   │   └── src/
+│   │       ├── analysis/        # LUFS, RMS, Peak, Dynamic Range, Stereo Width, Frequency Bands
+│   │       ├── backends/        # AI (Ollama/OpenAI/Anthropic/KeyhanStudio), Matchering, Local ML
+│   │       ├── pipeline/        # Orchestration: analyze → decide → process → export
+│   │       └── config.rs        # TOML configuration management
+│   └── mastering-cli/       # Rust CLI binary
+│       └── src/main.rs          # Clap-based CLI with analyze/master/config commands
+├── src-tauri/               # Tauri v2 desktop app (Rust backend)
+│   └── src/
+│       ├── commands.rs          # IPC bridge (8 commands)
+│       └── lib.rs               # App entry, plugins, state
+├── src/                     # Vue 3 frontend
+│   ├── composables/
+│   │   └── useMastering.js      # Central state + Tauri invoke wrappers
+│   └── components/
+│       ├── MainLayout.vue       # App shell, toolbar, empty state, status bar
+│       ├── TrackList.vue        # Horizontal batch track list
+│       ├── WaveformCanvas.vue   # Canvas waveform + LUFS meters + spectrum analyzer
+│       ├── AnalysisPanel.vue    # Detailed metrics with before/after
+│       ├── MasteringDialog.vue  # Backend/preset selection
+│       ├── SettingsDialog.vue   # Configuration editor
+│       ├── ProcessingDialog.vue # Progress indicator
+│       └── ToastNotification.vue
+├── python/                  # Python backends (Matchering, Pedalboard, ML)
+├── website/                 # Marketing website (audiomaster.keyhan.info)
+├── .github/workflows/       # CI + Release + Deploy pipelines
+├── Cargo.toml               # Rust workspace
+└── package.json             # Node.js (Vue + Vite)
+```
+
+---
+
+## Audio Analysis
+
+AudioMaster measures 7 metrics natively in Rust:
+
+| Metric | Description |
+|--------|-------------|
+| Integrated LUFS | Overall perceived loudness (EBU R128) |
+| Short-Term LUFS | Maximum loudness in a 3-second window |
+| RMS | Root mean square level |
+| Peak / True Peak | Sample peak and inter-sample peak |
+| Dynamic Range | Difference between loud and quiet sections |
+| Stereo Width | Spatial characteristics (mono → wide) |
+| Frequency Bands | 7-band analysis (sub-bass through brilliance) |
+
+All metrics are computed before and after mastering for comparison in the visualizer.
+
+---
+
+## Mastering Backends
+
+| Backend | Type | Description |
+|---------|------|-------------|
+| Matchering | Reference-based | Matches loudness, EQ, and dynamics to a reference track |
+| Ollama | AI (local) | Local LLM generates mastering parameters from analysis |
+| OpenAI | AI (cloud) | GPT-4 generates mastering parameters |
+| Anthropic | AI (cloud) | Claude generates mastering parameters |
+| KeyhanStudio | AI (gateway) | Central AI gateway with multiple model access |
+| Local ML | ML (local) | Local machine learning inference |
+
+---
+
+## Development
+
+### Prerequisites
+
+- **Rust** (stable) — `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`
+- **Node.js** 18+ — `brew install node` or [nodejs.org](https://nodejs.org)
+- **Python** 3.8+ — for Matchering and effects backends
+- **ffmpeg** — `brew install ffmpeg` (required for format conversion)
+
+### Build
+
+```bash
 # Install frontend dependencies
 npm install
 
-# Run in development mode
+# Install Python backends
+pip install -r python/requirements.txt
+
+# Run tests
+cargo test --workspace
+
+# Development mode (hot-reload)
 npx tauri dev
 
-# Build a release
+# Production build
 npx tauri build
-```
 
-### CLI Only
-
-If you only need the command-line tool:
-```bash
+# CLI only (no GUI dependencies)
 cargo build --release -p mastering-cli
-./target/release/mastering --help
 ```
 
-## Usage
-
-1. **Launch** the application (or run `npx tauri dev` for development).
-2. **Import Audio**: Click "Import Audio Files" or drag & drop your tracks into the window.
-3. **Analyze**: Click "Analyze All" to run loudness and spectral analysis on every track.
-4. **Review**: Inspect the waveform, LUFS meters, and spectrum analyzer for each track.
-5. **Configure**: Open Settings to choose your mastering backend (Matchering, AI, Local ML) and preset.
-6. **Master**: Click "Master All" to process all tracks. Results appear as before/after comparisons.
-7. **Export**: Mastered files are saved alongside the originals with a `_mastered` suffix.
-
-### CLI Usage
+### Test
 
 ```bash
-# Analyze a file
-mastering analyze input.wav
+# All Rust tests
+cargo test --workspace
 
-# Master with default settings
-mastering master input.wav -o output.wav
+# Core library only
+cargo test -p mastering-core
 
-# Master with a reference track
-mastering master input.wav -o output.wav --reference ref.wav
-
-# Use a specific backend
-mastering master input.wav -o output.wav --backend matchering
+# CLI only
+cargo test -p mastering-cli
 ```
 
 ### Configuration
 
 Copy the example config and edit to taste:
+
 ```bash
 cp config.toml.example ~/.config/mastering/config.toml
 ```
 
+---
+
+## Feature Comparison
+
+| Feature | Desktop App | Rust CLI |
+|---------|:-----------:|:--------:|
+| AI mastering | Yes | Yes |
+| Reference mastering (Matchering) | Yes | Yes |
+| Batch processing | Yes | Yes |
+| LUFS / RMS / Peak analysis | Yes | Yes |
+| Waveform visualization | Yes | -- |
+| LUFS meter bars | Yes | -- |
+| Spectrum analyzer | Yes | -- |
+| Before/after comparison | Yes | Yes |
+| Configurable presets | Yes | Yes |
+| Drag-and-drop | Yes | -- |
+| Cloud presets | Yes | -- |
+| Headless/server use | -- | Yes |
+| GUI | Tauri + Vue 3 | -- |
+
+---
+
 ## License
 
-This project is licensed under the **GNU General Public License v3.0** — a strong copyleft license that ensures this software and all derivatives remain free and open-source.
+GPL-3.0 — see [LICENSE](LICENSE).
 
-See the [LICENSE](LICENSE) file for details.
-
-## Author
-
-Created by **KEYHAN-A** — [audiomaster.keyhan.info](https://audiomaster.keyhan.info)
+Created by [Keyhan](https://github.com/KEYHAN-A).
