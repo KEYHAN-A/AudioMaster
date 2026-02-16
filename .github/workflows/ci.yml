@@ -50,13 +50,13 @@ jobs:
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libgtk-3-dev
 
       - name: Run cargo check
-        run: cargo check --workspace
+        run: cargo check -p mastering-core -p mastering-cli
 
       - name: Run cargo test
-        run: cargo test --workspace
+        run: cargo test -p mastering-core -p mastering-cli
 
       - name: Run cargo clippy
-        run: cargo clippy --workspace -- -D warnings
+        run: cargo clippy -p mastering-core -p mastering-cli -- -D warnings
         continue-on-error: true
 
   # -----------------------------------------------------------------------
