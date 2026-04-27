@@ -32,5 +32,5 @@ jobs:
           fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
 
-      - name: Generate coverage summary
-        run: cargo llvm-cov -p mastering-core -p mastering-cli --summary
+      - name: Print coverage summary
+        run: cargo llvm-cov -p mastering-core -p mastering-cli --text 2>&1 | tail -5
