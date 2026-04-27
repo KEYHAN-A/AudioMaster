@@ -182,3 +182,132 @@ fn test_mastering_job_auto_backend() {
     };
     assert_eq!(job_with_ref.resolved_backend(), Backend::Matchering);
 }
+
+#[test]
+fn test_audio_format_parsing() {
+    use std::str::FromStr;
+
+    assert_eq!(AudioFormat::from_str("wav").unwrap(), AudioFormat::Wav);
+    assert_eq!(AudioFormat::from_str("WAV").unwrap(), AudioFormat::Wav);
+    assert_eq!(AudioFormat::from_str("flac").unwrap(), AudioFormat::Flac);
+    assert_eq!(AudioFormat::from_str("mp3").unwrap(), AudioFormat::Mp3);
+    assert!(AudioFormat::from_str("invalid").is_err());
+}
+
+#[test]
+fn test_config_with_custom_values() {
+    let mut config = Config::default();
+    config.general.target_lufs = -16.0;
+    config.general.default_bit_depth = 16;
+
+    assert_eq!(config.general.target_lufs, -16.0);
+    assert_eq!(config.general.default_bit_depth, 16);
+}
+
+#[test]
+fn test_preset_descriptions() {
+    assert!(Preset::Streaming.description().contains("streaming"));
+    assert!(Preset::Cd.description().contains("CD"));
+    assert!(Preset::Vinyl.description().contains("Vinyl"));
+    assert!(Preset::Loud.description().contains("loud"));
+}
+
+#[test]
+fn test_mastering_job_with_preset() {
+    use mastering_core::pipeline::MasteringJob;
+    use std::path::PathBuf;
+
+    let job = MasteringJob {
+        input_path: PathBuf::from("song.wav"),
+        output_path: None,
+        reference_path: None,
+        backend: Backend::Auto,
+        ai_provider: None,
+        bit_depth: None,
+        format: None,
+        target_lufs: None,
+        no_limiter: false,
+        preset: Some(Preset::Vinyl),
+        dry_run: false,
+    };
+
+    // Preset should be Vinyl
+    assert_eq!(job.preset, Some(Preset::Vinyl));
+}
+
+#[test]
+fn test_backend_display() {
+    assert_eq!(Backend::Auto.to_string(), "auto");
+    assert_eq!(Backend::Matchering.to_string(), "matchering");
+    assert_eq!(Backend::Ai.to_string(), "ai");
+    assert_eq!(Backend::LocalMl.to_string(), "local-ml");
+}
+
+#[test]
+fn test_ai_provider_display() {
+    assert_eq!(AiProvider::Ollama.to_string(), "ollama");
+    assert_eq!(AiProvider::OpenAi.to_string(), "openai");
+    assert_eq!(AiProvider::Anthropic.to_string(), "anthropic");
+    assert_eq!(AiProvider::KeyhanStudio.to_string(), "keyhanstudio");
+}
+
+#[test]
+fn test_multiple_config_updates() {
+    let mut config = Config::default();
+
+    // Update multiple fields
+    config.general.target_lufs = -18.0;
+    config.ai.default_provider = AiProvider::OpenAi;
+    config.backends.matchering.python_path = "python3.10".to_string();
+
+    assert_eq!(config.general.target_lufs, -18.0);
+    assert_eq!(config.ai.default_provider, AiProvider::OpenAi);
+    assert_eq!(config.backends.matchering.python_path, "python3.10");
+}
+
+#[tokio::test]
+async fn test_analysis_with_short_audio() {
+    // Create a very short audio file (0.1 seconds)
+    let mut file = NamedTempFile::with_suffix(".wav").unwrap();
+
+    let sample_rate: u32 = 44100;
+    let channels: u16 = 2;
+    let bits_per_sample: u16 = 16;
+    let num_samples: u32 = sample_rate / 10; // 0.1 seconds
+    let data_size: u32 = num_samples * channels as u32 * (bits_per_sample / 8) as u32;
+    let file_size: u32 = 36 + data_size;
+
+    // Write WAV header
+    file.write_all(b"RIFF").unwrap();
+    file.write_all(&file_size.to_le_bytes()).unwrap();
+    file.write_all(b"WAVE").unwrap();
+    file.write_all(b"fmt ").unwrap();
+    file.write_all(&16u32.to_le_bytes()).unwrap();
+    file.write_all(&1u16.to_le_bytes()).unwrap();
+    file.write_all(&channels.to_le_bytes()).unwrap();
+    file.write_all(&sample_rate.to_le_bytes()).unwrap();
+    let byte_rate = sample_rate * channels as u32 * (bits_per_sample / 8) as u32;
+    file.write_all(&byte_rate.to_le_bytes()).unwrap();
+    let block_align = channels * (bits_per_sample / 8);
+    file.write_all(&block_align.to_le_bytes()).unwrap();
+    file.write_all(&bits_per_sample.to_le_bytes()).unwrap();
+    file.write_all(b"data").unwrap();
+    file.write_all(&data_size.to_le_bytes()).unwrap();
+
+    // Write samples
+    for i in 0..num_samples {
+        let t = i as f64 / sample_rate as f64;
+        let sample = (10000.0 * (2.0 * std::f64::consts::PI * 440.0 * t).sin()) as i16;
+        file.write_all(&sample.to_le_bytes()).unwrap();
+        file.write_all(&sample.to_le_bytes()).unwrap();
+    }
+    file.flush().unwrap();
+
+    // Analysis should handle short audio gracefully
+    let result = mastering_core::analysis::analyze_file(file.path()).await;
+    assert!(result.is_ok(), "Should handle short audio files");
+
+    let analysis = result.unwrap();
+    assert!(analysis.metadata.duration_secs < 1.0);
+}
+
