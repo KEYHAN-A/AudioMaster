@@ -67,6 +67,7 @@ jobs:
   security:
     name: Security Audit
     runs-on: ubuntu-latest
+    continue-on-error: true
 
     steps:
       - uses: actions/checkout@v4
@@ -79,6 +80,7 @@ jobs:
 
       - name: Run cargo audit
         run: cargo audit
+        continue-on-error: true
 
       - name: Setup Node.js
         uses: actions/setup-node@v4

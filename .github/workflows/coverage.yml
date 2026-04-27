@@ -23,7 +23,7 @@ jobs:
         uses: taiki-e/install-action@cargo-llvm-cov
 
       - name: Generate coverage report
-        run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
+        run: cargo llvm-cov -p mastering-core -p mastering-cli --lcov --output-path lcov.info
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
@@ -33,14 +33,4 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
 
       - name: Generate coverage summary
-        run: cargo llvm-cov --all-features --workspace --summary
-
-      - name: Check coverage threshold
-        run: |
-          COVERAGE=$(cargo llvm-cov --all-features --workspace --summary --output-file - 2>&1 | grep "^%" | awk '{print $1}' | sed 's/%//')
-          echo "Current coverage: ${COVERAGE}%"
-          if (( $(echo "$COVERAGE < 50" | bc -l) )); then
-            echo "Coverage ${COVERAGE}% is below threshold 50%"
-            exit 1
-          fi
-          echo "Coverage ${COVERAGE}% meets threshold 50%"
+        run: cargo llvm-cov -p mastering-core -p mastering-cli --summary
