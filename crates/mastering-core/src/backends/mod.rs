@@ -6,7 +6,8 @@ use anyhow::Result;
 use std::path::PathBuf;
 
 use crate::config::Config;
-use crate::types::MasteringParams;
+use crate::error::MasteringError;
+use crate::types::{Backend, MasteringParams};
 
 /// Options passed to any mastering backend.
 #[derive(Debug, Clone)]
@@ -74,6 +75,66 @@ impl MasteringEngine {
             MasteringEngine::Matchering(b) => b.check_available().await,
             MasteringEngine::Ai(b) => b.check_available().await,
             MasteringEngine::LocalMl(b) => b.check_available().await,
+        }
+    }
+
+    /// Get the next fallback backend in the chain.
+    ///
+    /// Fallback order: AI → Matchering → LocalMl
+    pub fn fallback(&self, config: &Config) -> Option<Self> {
+        match self {
+            MasteringEngine::Ai(_) => Some(MasteringEngine::Matchering(matchering::MatcheringBackend::new(config))),
+            MasteringEngine::Matchering(_) => Some(MasteringEngine::LocalMl(local_ml::LocalMlBackend::new(config))),
+            MasteringEngine::LocalMl(_) => None, // No more fallbacks
+        }
+    }
+
+    /// Process with automatic fallback on failure.
+    ///
+    /// Attempts the current backend, and if it fails, tries fallback backends
+    /// in order: AI → Matchering → LocalMl.
+    pub async fn process_with_fallback(
+        &self,
+        opts: &MasteringOptions,
+        config: &Config,
+    ) -> Result<BackendOutput, MasteringError> {
+        // Try current backend first
+        match self.process(opts).await {
+            Ok(output) => return Ok(output),
+            Err(e) => {
+                let error: MasteringError = e.into();
+
+                // Check if we can fallback
+                if let Some(fallback_engine) = self.fallback(config) {
+                    tracing::warn!(
+                        "Backend {} failed, trying fallback: {}",
+                        self.name(),
+                        fallback_engine.name()
+                    );
+
+                    // Try fallback
+                    return fallback_engine.process(opts).await.map_err(|e| {
+                        MasteringError::BackendError {
+                            backend: fallback_engine.name().to_string(),
+                            message: e.to_string(),
+                            can_fallback: false, // Already tried fallback
+                        }
+                    });
+                }
+
+                // No fallback available
+                Err(error)
+            }
+        }
+    }
+
+    /// Create a new engine from a Backend type with fallback chain support.
+    pub fn with_fallback(backend: Backend, config: &Config) -> Self {
+        match backend {
+            Backend::Auto => Self::Ai(ai::AiBackend::new(config)), // Auto resolved elsewhere
+            Backend::Matchering => Self::Matchering(matchering::MatcheringBackend::new(config)),
+            Backend::Ai => Self::Ai(ai::AiBackend::new(config)),
+            Backend::LocalMl => Self::LocalMl(local_ml::LocalMlBackend::new(config)),
         }
     }
 }

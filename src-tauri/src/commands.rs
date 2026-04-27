@@ -2,10 +2,83 @@ use mastering_core::analysis;
 use mastering_core::analysis::decode::decode_audio;
 use mastering_core::backends::MasteringEngine;
 use mastering_core::config::Config;
+use mastering_core::error::MasteringError;
 use mastering_core::pipeline::{self, MasteringJob};
 use mastering_core::types::*;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+
+// ---------------------------------------------------------------------------
+// Shared types
+// ---------------------------------------------------------------------------
+
+/// Structured error response for the frontend.
+#[derive(Serialize, Deserialize)]
+pub struct ErrorResponse {
+    pub message: String,
+    pub code: String,
+    pub can_retry: bool,
+    pub can_fallback: bool,
+    pub suggested_action: Option<String>,
+    pub details: Option<String>,
+}
+
+impl From<MasteringError> for ErrorResponse {
+    fn from(err: MasteringError) -> Self {
+        let (code, can_retry, can_fallback, suggested_action) = match &err {
+            MasteringError::NetworkTimeout { can_retry, .. } => {
+                ("NETWORK_TIMEOUT".to_string(), *can_retry, true, Some(err.user_message()))
+            }
+            MasteringError::AudioDecodeFailed { .. } => {
+                ("AUDIO_DECODE_FAILED".to_string(), false, false, Some(err.user_message()))
+            }
+            MasteringError::PythonUnavailable { .. } => {
+                ("PYTHON_UNAVAILABLE".to_string(), false, false, Some(err.user_message()))
+            }
+            MasteringError::ApiQuotaExceeded { .. } => {
+                ("API_QUOTA_EXCEEDED".to_string(), false, true, Some(err.user_message()))
+            }
+            MasteringError::InvalidConfig { .. } => {
+                ("INVALID_CONFIG".to_string(), false, false, Some(err.user_message()))
+            }
+            MasteringError::FileIo { .. } => {
+                ("FILE_IO_ERROR".to_string(), false, false, None)
+            }
+            MasteringError::BackendError {
+                can_fallback, ..
+            } => ("BACKEND_ERROR".to_string(), true, *can_fallback, None),
+            MasteringError::ProcessingError { .. } => {
+                ("PROCESSING_ERROR".to_string(), true, false, None)
+            }
+            MasteringError::ValidationError { .. } => {
+                ("VALIDATION_ERROR".to_string(), true, false, None)
+            }
+            MasteringError::Generic { .. } => ("UNKNOWN_ERROR".to_string(), false, false, None),
+        };
+
+        ErrorResponse {
+            message: err.to_string(),
+            code,
+            can_retry,
+            can_fallback,
+            suggested_action,
+            details: None,
+        }
+    }
+}
+
+/// Helper specifically for MasteringError.
+pub fn mastering_error_to_response(err: MasteringError) -> String {
+    serde_json::to_string(&ErrorResponse::from(err)).unwrap_or_else(|_| {
+        r#"{"message":"Unknown error","code":"UNKNOWN_ERROR","can_retry":false,"can_fallback":false}"#.to_string()
+    })
+}
+
+/// Helper for anyhow errors.
+pub fn anyhow_error_to_response(err: anyhow::Error) -> String {
+    let mastering_err: MasteringError = err.into();
+    mastering_error_to_response(mastering_err)
+}
 
 // ---------------------------------------------------------------------------
 // Shared types
@@ -101,9 +174,18 @@ pub struct BatchResult {
 #[tauri::command]
 pub async fn analyze_file(path: String) -> Result<AnalysisResult, String> {
     let path = PathBuf::from(&path);
+
+    // Validate input
+    if !path.exists() {
+        return Err(mastering_error_to_response(MasteringError::FileIo {
+            message: "File not found".to_string(),
+            path: Some(path.clone()),
+        }));
+    }
+
     let result = analysis::analyze_file(&path)
         .await
-        .map_err(|e| format!("Analysis failed: {e}"))?;
+        .map_err(|e| mastering_error_to_response(e.into()))?;
     Ok(result.into())
 }
 
@@ -116,7 +198,12 @@ pub async fn get_waveform_data(
     let num_points = if num_points == 0 { 1000 } else { num_points };
 
     tokio::task::spawn_blocking(move || {
-        let decoded = decode_audio(&path).map_err(|e| format!("Decode failed: {e}"))?;
+        let decoded = decode_audio(&path).map_err(|e| {
+            mastering_error_to_response(MasteringError::audio_decode_failed(
+                path.display().to_string(),
+                e.to_string(),
+            ))
+        })?;
 
         let mono: Vec<f32> = if decoded.channels == 1 {
             decoded.samples.clone()
@@ -147,39 +234,54 @@ pub async fn get_waveform_data(
         Ok(peaks)
     })
     .await
-    .map_err(|e| format!("Task failed: {e}"))?
+    .map_err(|e| mastering_error_to_response(MasteringError::Generic {
+        message: format!("Task failed: {e}"),
+        source: None,
+    }))?
 }
 
 fn build_job(request: &MasterRequest) -> Result<(MasteringJob, Config), String> {
-    let config = Config::load().map_err(|e| format!("Config error: {e}"))?;
+    let config = Config::load().map_err(|e| mastering_error_to_response(e.into()))?;
 
     let backend: Backend = request
         .backend
         .as_deref()
         .unwrap_or("auto")
         .parse()
-        .map_err(|e: anyhow::Error| e.to_string())?;
+        .map_err(|e| mastering_error_to_response(MasteringError::InvalidConfig {
+            message: format!("Invalid backend: {}", e),
+            config_key: Some("backend".to_string()),
+        }))?;
 
     let ai_provider: Option<AiProvider> = request
         .ai_provider
         .as_deref()
         .map(|s| s.parse())
         .transpose()
-        .map_err(|e: anyhow::Error| e.to_string())?;
+        .map_err(|e| mastering_error_to_response(MasteringError::InvalidConfig {
+            message: format!("Invalid AI provider: {}", e),
+            config_key: Some("ai_provider".to_string()),
+        }))?;
 
     let format: Option<AudioFormat> = request
         .format
         .as_deref()
         .map(|s| s.parse())
         .transpose()
-        .map_err(|e: anyhow::Error| e.to_string())?;
+        .map_err(|e| mastering_error_to_response(MasteringError::InvalidConfig {
+            message: format!("Invalid format: {}", e),
+            config_key: Some("format".to_string()),
+        }))?;
 
     let preset: Option<Preset> = request
         .preset
         .as_deref()
         .map(|s| s.parse())
         .transpose()
-        .map_err(|e: anyhow::Error| e.to_string())?;
+        .map_err(|e| mastering_error_to_response(MasteringError::InvalidConfig {
+            message: format!("Invalid preset: {}", e),
+            config_key: Some("preset".to_string()),
+        }))?;
 
     let job = MasteringJob {
         input_path: PathBuf::from(&request.input_path),
@@ -202,9 +304,17 @@ fn build_job(request: &MasterRequest) -> Result<(MasteringJob, Config), String> 
 pub async fn master_file(request: MasterRequest) -> Result<MasterResult, String> {
     let (job, config) = build_job(&request)?;
 
+    // Validate input file exists
+    if !job.input_path.exists() {
+        return Err(mastering_error_to_response(MasteringError::FileIo {
+            message: "Input file not found".to_string(),
+            path: Some(job.input_path.clone()),
+        }));
+    }
+
     let result = pipeline::run(&job, &config)
         .await
-        .map_err(|e| format!("Mastering failed: {e}"))?;
+        .map_err(|e| mastering_error_to_response(e.into()))?;
 
     Ok(MasterResult {
         output_path: result.output_path.to_string_lossy().to_string(),

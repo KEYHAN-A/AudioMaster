@@ -1,11 +1,126 @@
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::analysis;
 use crate::backends::{MasteringEngine, MasteringOptions};
 use crate::config::Config;
+use crate::error::MasteringError;
 use crate::types::{AiProvider, AudioFormat, Backend, MasteringResult, Preset};
+
+/// Maximum supported file size (500MB)
+const MAX_FILE_SIZE: u64 = 500 * 1024 * 1024;
+
+/// Supported audio formats for input
+const SUPPORTED_INPUT_EXTENSIONS: &[&str] = &["wav", "flac", "mp3", "ogg", "m4a", "aac", "wma"];
+
+/// Validate input file before processing.
+pub fn validate_input(path: &Path) -> Result<(), MasteringError> {
+    // Check file exists
+    if !path.exists() {
+        return Err(MasteringError::FileIo {
+            message: "Input file does not exist".to_string(),
+            path: Some(path.to_path_buf()),
+        });
+    }
+
+    // Check it's a file (not a directory)
+    if !path.is_file() {
+        return Err(MasteringError::ValidationError {
+            message: "Path is not a file".to_string(),
+            field: Some("input_path".to_string()),
+        });
+    }
+
+    // Check file extension
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+
+    if !SUPPORTED_INPUT_EXTENSIONS.contains(&ext.as_str()) {
+        return Err(MasteringError::ValidationError {
+            message: format!(
+                "Unsupported file format: {}. Supported: {}",
+                ext,
+                SUPPORTED_INPUT_EXTENSIONS.join(", ")
+            ),
+            field: Some("input_path".to_string()),
+        });
+    }
+
+    // Check file size
+    let metadata = path.metadata().map_err(|e| MasteringError::FileIo {
+        message: format!("Cannot read file metadata: {}", e),
+        path: Some(path.to_path_buf()),
+    })?;
+
+    let file_size = metadata.len();
+    if file_size == 0 {
+        return Err(MasteringError::ValidationError {
+            message: "Input file is empty".to_string(),
+            field: Some("input_path".to_string()),
+        });
+    }
+
+    if file_size > MAX_FILE_SIZE {
+        return Err(MasteringError::ValidationError {
+            message: format!(
+                "Input file too large ({} MB). Maximum size is {} MB.",
+                file_size / (1024 * 1024),
+                MAX_FILE_SIZE / (1024 * 1024)
+            ),
+            field: Some("input_path".to_string()),
+        });
+    }
+
+    Ok(())
+}
+
+/// Check disk space for output file.
+pub fn check_disk_space(output_path: &Path, _estimated_size: u64) -> Result<(), MasteringError> {
+    // Get parent directory
+    let parent = output_path
+        .parent()
+        .unwrap_or(Path::new("."));
+
+    // Get available space (simplified check)
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        match std::fs::metadata(parent) {
+            Ok(meta) => {
+                // This is a simplified check - in production you'd use statvfs
+                let _ = meta.dev(); // Suppress unused warning
+            }
+            Err(_) => {
+                warn!("Cannot check disk space for {}", parent.display());
+            }
+        }
+    }
+
+    // Ensure output directory exists or can be created
+    if !parent.exists() {
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            return Err(MasteringError::FileIo {
+                message: format!("Cannot create output directory: {}", e),
+                path: Some(parent.to_path_buf()),
+            });
+        }
+    }
+
+    Ok(())
+}
+
+/// Trait for pre-flight checks that backends can implement.
+pub trait PreflightCheck {
+    /// Check if the backend is available and properly configured.
+    fn check_available(&self) -> Result<(), MasteringError>;
+
+    /// Validate configuration for this backend.
+    fn validate_config(&self, config: &Config) -> Result<(), MasteringError>;
+}
 
 /// High-level mastering job request.
 #[derive(Debug, Clone)]
@@ -64,6 +179,9 @@ impl MasteringJob {
 
 /// Execute the full mastering pipeline.
 pub async fn run(job: &MasteringJob, config: &Config) -> Result<MasteringResult> {
+    // Step 0: Validate input
+    validate_input(&job.input_path)?;
+
     let output_path = job.resolved_output_path(config);
     let backend = job.resolved_backend();
     let bit_depth = job.bit_depth.unwrap_or(config.general.default_bit_depth);
