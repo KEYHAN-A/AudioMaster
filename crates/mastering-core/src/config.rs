@@ -33,6 +33,8 @@ pub struct AiConfig {
     #[serde(default)]
     pub ollama: OllamaConfig,
     #[serde(default)]
+    pub lmstudio: LmStudioConfig,
+    #[serde(default)]
     pub keyhanstudio: KeyhanStudioConfig,
     #[serde(default)]
     pub openai: OpenAiConfig,
@@ -69,6 +71,14 @@ pub struct AnthropicConfig {
     #[serde(default)]
     pub api_key: String,
     #[serde(default = "default_anthropic_model")]
+    pub model: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LmStudioConfig {
+    #[serde(default = "default_lmstudio_endpoint")]
+    pub endpoint: String,
+    #[serde(default)]
     pub model: String,
 }
 
@@ -129,6 +139,9 @@ fn default_python_path() -> String {
 fn default_ml_model() -> String {
     "deepafx-st".into()
 }
+fn default_lmstudio_endpoint() -> String {
+    "http://localhost:1234/v1".into()
+}
 
 // --- Default trait impls ---
 
@@ -158,9 +171,19 @@ impl Default for AiConfig {
         Self {
             default_provider: default_ai_provider(),
             ollama: OllamaConfig::default(),
+            lmstudio: LmStudioConfig::default(),
             keyhanstudio: KeyhanStudioConfig::default(),
             openai: OpenAiConfig::default(),
             anthropic: AnthropicConfig::default(),
+        }
+    }
+}
+
+impl Default for LmStudioConfig {
+    fn default() -> Self {
+        Self {
+            endpoint: default_lmstudio_endpoint(),
+            model: String::new(),
         }
     }
 }

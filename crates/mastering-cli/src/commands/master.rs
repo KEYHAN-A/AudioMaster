@@ -83,6 +83,7 @@ pub async fn run(args: MasterArgs) -> Result<()> {
         reference_path: args.reference,
         backend,
         ai_provider,
+        lmstudio_model: None,
         bit_depth: args.bit_depth,
         format,
         target_lufs: args.target_lufs,

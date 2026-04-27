@@ -1,4 +1,7 @@
 <script setup>
+import { ref, watch } from "vue";
+import { invoke } from "@tauri-apps/api/core";
+
 const props = defineProps({
   visible: Boolean,
   presets: Array,
@@ -7,6 +10,34 @@ const props = defineProps({
 });
 
 const emit = defineEmits(["close", "master"]);
+
+const lmstudioModels = ref([]);
+const lmstudioOnline = ref(null);
+
+watch(
+  () => props.state?.selectedProvider,
+  async (provider) => {
+    if (provider === "lmstudio") {
+      await loadLmStudioModels();
+    }
+  }
+);
+
+async function loadLmStudioModels() {
+  try {
+    const endpoint = props.state?.config?.ai?.lmstudio?.endpoint || null;
+    const status = await invoke("lmstudio_status", { endpoint });
+    lmstudioOnline.value = status.running;
+    if (status.running) {
+      lmstudioModels.value = await invoke("lmstudio_models", { endpoint });
+    } else {
+      lmstudioModels.value = [];
+    }
+  } catch (_) {
+    lmstudioOnline.value = false;
+    lmstudioModels.value = [];
+  }
+}
 </script>
 
 <template>
@@ -73,10 +104,38 @@ const emit = defineEmits(["close", "master"]);
               <label class="form-label">AI Provider</label>
               <select v-model="state.selectedProvider" class="form-input">
                 <option value="ollama">Ollama (Local)</option>
+                <option value="lmstudio">LM Studio (Local)</option>
                 <option value="keyhanstudio">KeyhanStudio API</option>
                 <option value="openai">OpenAI</option>
                 <option value="anthropic">Anthropic</option>
               </select>
+            </div>
+          </Transition>
+
+          <!-- LM Studio Model Selection -->
+          <Transition name="slide-up">
+            <div v-if="state.selectedBackend === 'ai' && state.selectedProvider === 'lmstudio'" class="form-group">
+              <label class="form-label">LM Studio Model</label>
+              <div class="lmstudio-row">
+                <select v-model="state.selectedLmStudioModel" class="form-input">
+                  <option value="">-- Select Model --</option>
+                  <option v-for="m in lmstudioModels" :key="m.id" :value="m.id">
+                    {{ m.id }}
+                  </option>
+                </select>
+                <span
+                  class="lmstudio-status"
+                  :class="lmstudioOnline ? 'status-ok' : 'status-err'"
+                >
+                  {{ lmstudioOnline ? 'Online' : 'Offline' }}
+                </span>
+                <button class="btn btn-ghost btn-sm" @click="loadLmStudioModels">
+                  Refresh
+                </button>
+              </div>
+              <p v-if="lmstudioOnline === false" class="form-hint">
+                LM Studio is not running. Start it and load a model first.
+              </p>
             </div>
           </Transition>
 
@@ -159,4 +218,31 @@ const emit = defineEmits(["close", "master"]);
 .toggle-label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
 .toggle-label input { accent-color: var(--cyan); }
 .toggle-text { font-size: 12px; color: var(--text); }
+
+.lmstudio-row { display: flex; gap: 8px; align-items: center; }
+.lmstudio-row .form-input { flex: 1; }
+
+.lmstudio-status {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 3px 10px;
+  border-radius: 20px;
+  white-space: nowrap;
+}
+
+.status-ok {
+  background: rgba(34, 197, 94, 0.15);
+  color: var(--success);
+}
+
+.status-err {
+  background: rgba(239, 68, 68, 0.15);
+  color: var(--danger);
+}
+
+.form-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
 </style>

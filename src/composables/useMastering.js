@@ -24,6 +24,11 @@ const state = reactive({
   outputFormat: "wav",
   targetLufs: -14.0,
   noLimiter: false,
+
+  // LM Studio state
+  selectedLmStudioModel: "",
+  lmstudioModels: [],
+  lmstudioStatus: null,
 });
 
 const hasTracks = computed(() => state.tracks.length > 0);
@@ -158,6 +163,7 @@ function buildRequest(track, outputPath) {
     reference_path: state.referenceFile || null,
     backend: state.selectedBackend,
     ai_provider: state.selectedBackend === "ai" ? state.selectedProvider : null,
+    lmstudio_model: state.selectedProvider === "lmstudio" ? state.selectedLmStudioModel || null : null,
     bit_depth: state.bitDepth,
     format: state.outputFormat,
     target_lufs: state.targetLufs,
@@ -221,6 +227,22 @@ async function masterSelected(outputPath) {
   state.processingMessage = "";
 }
 
+async function checkLmStudio() {
+  const endpoint = state.config?.ai?.lmstudio?.endpoint || null;
+  try {
+    const result = await invoke("lmstudio_status", { endpoint });
+    state.lmstudioStatus = result.running;
+    if (result.running) {
+      state.lmstudioModels = await invoke("lmstudio_models", { endpoint });
+    } else {
+      state.lmstudioModels = [];
+    }
+  } catch (_) {
+    state.lmstudioStatus = false;
+    state.lmstudioModels = [];
+  }
+}
+
 function clearAll() {
   state.tracks.splice(0);
   state.selectedTrackId = null;
@@ -249,6 +271,7 @@ export function useMastering() {
     masterTrack,
     masterAll,
     masterSelected,
+    checkLmStudio,
     clearAll,
   };
 }

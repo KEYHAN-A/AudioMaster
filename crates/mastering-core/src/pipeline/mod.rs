@@ -130,6 +130,7 @@ pub struct MasteringJob {
     pub reference_path: Option<PathBuf>,
     pub backend: Backend,
     pub ai_provider: Option<AiProvider>,
+    pub lmstudio_model: Option<String>,
     pub bit_depth: Option<u16>,
     pub format: Option<AudioFormat>,
     pub target_lufs: Option<f64>,
@@ -230,7 +231,11 @@ pub async fn run(job: &MasteringJob, config: &Config) -> Result<MasteringResult>
     }
 
     // Step 2: Create and configure the backend engine
-    let mut engine = MasteringEngine::from_config(backend, config);
+    let mut config = config.clone();
+    if let Some(ref model) = job.lmstudio_model {
+        config.ai.lmstudio.model = model.clone();
+    }
+    let mut engine = MasteringEngine::from_config(backend, &config);
 
     // Override AI provider if specified
     if let (MasteringEngine::Ai(ref mut ai_backend), Some(provider)) =

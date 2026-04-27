@@ -152,6 +152,7 @@ pub struct MasterRequest {
     pub reference_path: Option<String>,
     pub backend: Option<String>,
     pub ai_provider: Option<String>,
+    pub lmstudio_model: Option<String>,
     pub bit_depth: Option<u16>,
     pub format: Option<String>,
     pub target_lufs: Option<f64>,
@@ -289,6 +290,7 @@ fn build_job(request: &MasterRequest) -> Result<(MasteringJob, Config), String> 
         reference_path: request.reference_path.as_ref().map(PathBuf::from),
         backend,
         ai_provider,
+        lmstudio_model: request.lmstudio_model.clone(),
         bit_depth: request.bit_depth,
         format,
         target_lufs: request.target_lufs,
@@ -462,4 +464,77 @@ pub fn get_presets() -> Vec<PresetInfo> {
             description: Preset::Loud.description().into(),
         },
     ]
+}
+
+// ---------------------------------------------------------------------------
+// LM Studio commands
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize)]
+pub struct LmStudioStatus {
+    pub running: bool,
+    pub endpoint: String,
+}
+
+#[tauri::command]
+pub async fn lmstudio_status(endpoint: Option<String>) -> Result<LmStudioStatus, String> {
+    let endpoint = endpoint.unwrap_or_else(|| "http://localhost:1234/v1".to_string());
+    let running = mastering_core::backends::ai::AiBackend::lmstudio_status(&endpoint)
+        .await
+        .unwrap_or(false);
+    Ok(LmStudioStatus { running, endpoint })
+}
+
+#[derive(Serialize)]
+pub struct LmStudioModelInfo {
+    pub id: String,
+}
+
+#[tauri::command]
+pub async fn lmstudio_models(endpoint: Option<String>) -> Result<Vec<LmStudioModelInfo>, String> {
+    let endpoint = endpoint.unwrap_or_else(|| "http://localhost:1234/v1".to_string());
+    let models = mastering_core::backends::ai::AiBackend::lmstudio_models(&endpoint)
+        .await
+        .map_err(|e| format!("Failed to list LM Studio models: {e}"))?;
+    Ok(models
+        .into_iter()
+        .map(|m| LmStudioModelInfo { id: m.id })
+        .collect())
+}
+
+#[derive(Serialize)]
+pub struct VramInfo {
+    pub gpus: Vec<mastering_core::gpu::GpuInfo>,
+    pub detected_vram_mb: Option<u64>,
+    pub tier: Option<String>,
+    pub recommendations: Vec<mastering_core::gpu::ModelRecommendation>,
+}
+
+#[tauri::command]
+pub fn detect_vram() -> Result<VramInfo, String> {
+    let gpus = mastering_core::gpu::detect_vram().map_err(|e| format!("GPU detection failed: {e}"))?;
+
+    let detected_vram_mb = gpus.iter().map(|g| g.vram_total_mb).max();
+    let tier = detected_vram_mb.map(|v| {
+        let tiers = mastering_core::gpu::get_vram_tiers();
+        tiers
+            .iter()
+            .filter(|t| v >= t.vram_mb)
+            .last()
+            .map(|t| t.tier_name.clone())
+            .unwrap_or_else(|| "<4GB".to_string())
+    });
+
+    let recommendations = if let Some(vram) = detected_vram_mb {
+        mastering_core::gpu::get_recommendations_for_vram(vram)
+    } else {
+        vec![]
+    };
+
+    Ok(VramInfo {
+        gpus,
+        detected_vram_mb,
+        tier,
+        recommendations,
+    })
 }

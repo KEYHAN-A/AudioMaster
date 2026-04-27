@@ -162,6 +162,7 @@ impl std::str::FromStr for Backend {
 #[serde(rename_all = "snake_case")]
 pub enum AiProvider {
     Ollama,
+    LmStudio,
     KeyhanStudio,
     OpenAi,
     Anthropic,
@@ -171,6 +172,7 @@ impl std::fmt::Display for AiProvider {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             AiProvider::Ollama => write!(f, "ollama"),
+            AiProvider::LmStudio => write!(f, "lmstudio"),
             AiProvider::KeyhanStudio => write!(f, "keyhanstudio"),
             AiProvider::OpenAi => write!(f, "openai"),
             AiProvider::Anthropic => write!(f, "anthropic"),
@@ -183,6 +185,7 @@ impl std::str::FromStr for AiProvider {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
             "ollama" => Ok(AiProvider::Ollama),
+            "lmstudio" | "lm_studio" => Ok(AiProvider::LmStudio),
             "keyhanstudio" | "keyhan" => Ok(AiProvider::KeyhanStudio),
             "openai" => Ok(AiProvider::OpenAi),
             "anthropic" | "claude" => Ok(AiProvider::Anthropic),

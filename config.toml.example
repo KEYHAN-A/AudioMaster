@@ -11,6 +11,10 @@ default_provider = "ollama"
 endpoint = "http://localhost:11434"
 model = "llama3"
 
+[ai.lmstudio]
+endpoint = "http://localhost:1234/v1"
+model = ""
+
 [ai.keyhanstudio]
 endpoint = "https://api.keyhanstudio.com"
 api_key = ""

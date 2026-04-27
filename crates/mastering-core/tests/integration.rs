@@ -90,6 +90,14 @@ fn test_ai_provider_parsing() {
         "claude".parse::<AiProvider>().unwrap(),
         AiProvider::Anthropic
     );
+    assert_eq!(
+        "lmstudio".parse::<AiProvider>().unwrap(),
+        AiProvider::LmStudio
+    );
+    assert_eq!(
+        "lm_studio".parse::<AiProvider>().unwrap(),
+        AiProvider::LmStudio
+    );
 }
 
 #[test]
@@ -135,6 +143,7 @@ fn test_mastering_job_output_path() {
         reference_path: None,
         backend: Backend::Auto,
         ai_provider: None,
+        lmstudio_model: None,
         bit_depth: None,
         format: None,
         target_lufs: None,
@@ -158,6 +167,7 @@ fn test_mastering_job_auto_backend() {
         reference_path: None,
         backend: Backend::Auto,
         ai_provider: None,
+        lmstudio_model: None,
         bit_depth: None,
         format: None,
         target_lufs: None,
@@ -173,6 +183,7 @@ fn test_mastering_job_auto_backend() {
         reference_path: Some(PathBuf::from("ref.wav")),
         backend: Backend::Auto,
         ai_provider: None,
+        lmstudio_model: None,
         bit_depth: None,
         format: None,
         target_lufs: None,
@@ -223,6 +234,7 @@ fn test_mastering_job_with_preset() {
         reference_path: None,
         backend: Backend::Auto,
         ai_provider: None,
+        lmstudio_model: None,
         bit_depth: None,
         format: None,
         target_lufs: None,

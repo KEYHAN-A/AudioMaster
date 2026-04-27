@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
 use std::process::Command;
 use tracing::{debug, info};
 
@@ -7,11 +8,18 @@ use crate::analysis;
 use crate::config::Config;
 use crate::types::{AiProvider, MasteringParams};
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LmStudioModel {
+    pub id: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct AiBackend {
     provider: AiProvider,
     ollama_endpoint: String,
     ollama_model: String,
+    lmstudio_endpoint: String,
+    lmstudio_model: String,
     keyhanstudio_endpoint: String,
     keyhanstudio_api_key: String,
     openai_api_key: String,
@@ -28,6 +36,8 @@ impl AiBackend {
             provider: config.ai.default_provider,
             ollama_endpoint: config.ai.ollama.endpoint.clone(),
             ollama_model: config.ai.ollama.model.clone(),
+            lmstudio_endpoint: config.ai.lmstudio.endpoint.clone(),
+            lmstudio_model: config.ai.lmstudio.model.clone(),
             keyhanstudio_endpoint: config.ai.keyhanstudio.endpoint.clone(),
             keyhanstudio_api_key: config.ai.keyhanstudio.api_key.clone(),
             openai_api_key: config.ai.openai.api_key.clone(),
@@ -108,6 +118,7 @@ impl AiBackend {
     async fn call_ai(&self, prompt: &str) -> Result<String> {
         match self.provider {
             AiProvider::Ollama => self.call_ollama(prompt).await,
+            AiProvider::LmStudio => self.call_lmstudio(prompt).await,
             AiProvider::KeyhanStudio => self.call_keyhanstudio(prompt).await,
             AiProvider::OpenAi => self.call_openai(prompt).await,
             AiProvider::Anthropic => self.call_anthropic(prompt).await,
@@ -272,6 +283,46 @@ impl AiBackend {
         Ok(content)
     }
 
+    async fn call_lmstudio(&self, prompt: &str) -> Result<String> {
+        let client = reqwest::Client::new();
+        let url = format!(
+            "{}/chat/completions",
+            self.lmstudio_endpoint.trim_end_matches('/')
+        );
+
+        let body = serde_json::json!({
+            "model": self.lmstudio_model,
+            "messages": [
+                {"role": "system", "content": LMSTUDIO_SYSTEM_PROMPT},
+                {"role": "user", "content": prompt}
+            ],
+            "response_format": { "type": "json_object" },
+            "temperature": 0.3,
+        });
+
+        let resp = client
+            .post(&url)
+            .json(&body)
+            .send()
+            .await
+            .context("Calling LM Studio API — is LM Studio running and a model loaded?")?;
+
+        let status = resp.status();
+        let text = resp.text().await?;
+
+        if !status.is_success() {
+            anyhow::bail!("LM Studio API error ({status}): {text}");
+        }
+
+        let parsed: serde_json::Value = serde_json::from_str(&text)?;
+        let content = parsed["choices"][0]["message"]["content"]
+            .as_str()
+            .unwrap_or(&text)
+            .to_string();
+
+        Ok(content)
+    }
+
     pub async fn check_available(&self) -> Result<bool> {
         match self.provider {
             AiProvider::Ollama => {
@@ -281,12 +332,57 @@ impl AiBackend {
                 let resp = client.get(&self.ollama_endpoint).send().await;
                 Ok(resp.is_ok())
             }
+            AiProvider::LmStudio => {
+                let client = reqwest::Client::builder()
+                    .timeout(std::time::Duration::from_secs(3))
+                    .build()?;
+                let url = self.lmstudio_endpoint.trim_end_matches('/');
+                let resp = client.get(url).send().await;
+                Ok(resp.is_ok())
+            }
             AiProvider::KeyhanStudio => {
                 Ok(!self.keyhanstudio_endpoint.is_empty())
             }
             AiProvider::OpenAi => Ok(!self.openai_api_key.is_empty()),
             AiProvider::Anthropic => Ok(!self.anthropic_api_key.is_empty()),
         }
+    }
+
+    pub async fn lmstudio_status(endpoint: &str) -> Result<bool> {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(3))
+            .build()?;
+        let url = endpoint.trim_end_matches('/');
+        let resp = client.get(url).send().await;
+        match resp {
+            Ok(r) => Ok(r.status().is_success()),
+            Err(_) => Ok(false),
+        }
+    }
+
+    pub async fn lmstudio_models(endpoint: &str) -> Result<Vec<LmStudioModel>> {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(5))
+            .build()?;
+        let url = format!("{}/models", endpoint.trim_end_matches('/'));
+        let resp = client.get(&url).send().await
+            .context("Failed to connect to LM Studio. Is it running?")?;
+
+        let parsed: serde_json::Value = resp.json().await
+            .context("Failed to parse LM Studio response")?;
+
+        let models = parsed["data"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|m| {
+                let id = m["id"].as_str()?.to_string();
+                Some(LmStudioModel { id })
+            })
+            .collect();
+
+        Ok(models)
     }
 }
 
@@ -321,6 +417,57 @@ The JSON must have this exact structure:
 
 band_type must be one of: low_shelf, high_shelf, peak, low_pass, high_pass
 Provide musically appropriate values based on the analysis. Be subtle with EQ (usually +/- 3dB max)."#;
+
+const LMSTUDIO_SYSTEM_PROMPT: &str = r#"You are a professional audio mastering engineer. You receive audio analysis data and output precise mastering parameters as a JSON object. You output ONLY valid JSON — no explanations, no markdown, no commentary.
+
+STEP 1 - ANALYZE the audio:
+- Compare loudness to target: if LUFS is much louder than target, reduce gain; if much quieter, plan gain boost
+- Check dynamic range: wide range (>15dB) suggests gentle compression; narrow range (<6dB) suggests minimal compression
+- Examine frequency bands: identify if sub-bass is excessive, midrange is muddy, or brilliance is lacking
+- Note stereo width: values far from 1.0 may need correction
+
+STEP 2 - RECOMMEND parameters:
+- EQ: Apply corrective EQ first (cut problematic frequencies), then gentle enhancement (usually +/- 2dB max)
+  - Use low_shelf for bass adjustments (60-120Hz), peak for midrange (250-4000Hz), high_shelf for air (8000-12000Hz)
+  - Q values: 0.5-1.0 for broad shaping, 1.0-3.0 for surgical corrections
+- Compression: Match to genre and dynamic range
+  - Gentle: ratio 1.5-2.5, slow attack (15-30ms), auto release
+  - Moderate: ratio 2.5-4.0, medium attack (5-15ms)
+  - Never exceed ratio 6.0 for mastering
+- Limiter: Set ceiling at -1.0 to -0.5 dB, moderate release (30-100ms)
+- Stereo: Width 0.9-1.1 is safe. Adjust only if analysis shows problems.
+- Target LUFS: Match the specified target precisely.
+
+STEP 3 - OUTPUT this exact JSON structure:
+{
+  "eq": [
+    {"frequency": 80.0, "gain_db": 1.5, "q": 0.7, "band_type": "low_shelf"},
+    {"frequency": 3000.0, "gain_db": -0.5, "q": 1.0, "band_type": "peak"},
+    {"frequency": 12000.0, "gain_db": 2.0, "q": 0.7, "band_type": "high_shelf"}
+  ],
+  "compression": {
+    "threshold_db": -18.0,
+    "ratio": 2.5,
+    "attack_ms": 10.0,
+    "release_ms": 100.0,
+    "knee_db": 6.0,
+    "makeup_gain_db": 2.0
+  },
+  "limiter": {
+    "enabled": true,
+    "ceiling_db": -1.0,
+    "release_ms": 50.0
+  },
+  "stereo": {
+    "width": 1.0,
+    "balance": 0.0
+  },
+  "target_lufs": -14.0
+}
+
+band_type must be one of: low_shelf, high_shelf, peak, low_pass, high_pass
+Value ranges: EQ gain -6 to +6 dB, Q 0.3 to 5.0, compression ratio 1.0 to 6.0, stereo width 0.5 to 1.5.
+IMPORTANT: Return ONLY the JSON object. No other text."#;
 
 fn build_mastering_prompt(analysis_json: &str, opts: &MasteringOptions) -> String {
     let preset_info = opts

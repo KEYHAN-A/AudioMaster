@@ -23,6 +23,9 @@ pub fn run() {
             commands::diagnose_backends,
             commands::get_presets,
             commands::get_waveform_data,
+            commands::lmstudio_status,
+            commands::lmstudio_models,
+            commands::detect_vram,
         ])
         .setup(|app| {
             // Set project dir env var so mastering-core can find python scripts
