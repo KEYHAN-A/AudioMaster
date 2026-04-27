@@ -2,7 +2,7 @@
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![GitHub](https://img.shields.io/badge/GitHub-KEYHAN--A%2FAudioMaster-181717?logo=github)](https://github.com/KEYHAN-A/AudioMaster)
-[![Version](https://img.shields.io/badge/version-1.0.0-38bdf8)](https://github.com/KEYHAN-A/AudioMaster/releases)
+[![Version](https://img.shields.io/badge/version-1.1.0-38bdf8)](https://github.com/KEYHAN-A/AudioMaster/releases)
 [![Platform](https://img.shields.io/badge/platform-macOS-a78bfa)]()
 [![Website](https://img.shields.io/badge/website-audiomaster.keyhan.info-38bdf8)](https://audiomaster.keyhan.info)
 [![CI](https://github.com/KEYHAN-A/AudioMaster/actions/workflows/ci.yml/badge.svg)](https://github.com/KEYHAN-A/AudioMaster/actions/workflows/ci.yml)
