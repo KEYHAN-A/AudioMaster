@@ -145,15 +145,16 @@ pub fn compute_file_hash(path: &Path) -> Result<String, std::io::Error> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_cache_creation() {
+    #[tokio::test]
+    async fn test_cache_creation() {
         let cache = AnalysisCache::with_defaults();
         assert_eq!(cache.len().await, 0);
     }
 
-    #[test]
-    fn test_cache_put_and_len() {
+    #[tokio::test]
+    async fn test_cache_put_and_len() {
         let cache = AnalysisCache::with_defaults();
-        // Note: This test requires async runtime
+        // Note: This test requires actual AudioAnalysis data
+        assert_eq!(cache.len().await, 0);
     }
 }

@@ -58,6 +58,7 @@ fn compute_rms_db(samples: &[f32]) -> f64 {
 }
 
 /// Peak level in dB.
+
 fn compute_peak_db(samples: &[f32]) -> f64 {
     let peak = samples
         .iter()
@@ -72,6 +73,7 @@ fn compute_peak_db(samples: &[f32]) -> f64 {
 
 /// Simplified ITU-R BS.1770 loudness measurement.
 /// Full implementation requires K-weighting filter; this is a practical approximation.
+
 fn compute_lufs(audio: &DecodedAudio) -> f64 {
     let channels = audio.channels as usize;
     if audio.samples.is_empty() || channels == 0 {
@@ -150,6 +152,7 @@ fn compute_lufs(audio: &DecodedAudio) -> f64 {
 }
 
 /// Maximum short-term loudness (3-second window).
+
 fn compute_short_term_lufs_max(audio: &DecodedAudio) -> f64 {
     let channels = audio.channels as usize;
     if audio.samples.is_empty() || channels == 0 {
@@ -194,6 +197,7 @@ fn compute_short_term_lufs_max(audio: &DecodedAudio) -> f64 {
 }
 
 /// Dynamic range: difference between peak loudness of loud and quiet sections.
+
 fn compute_dynamic_range(audio: &DecodedAudio) -> f64 {
     let channels = audio.channels as usize;
     if audio.samples.is_empty() || channels == 0 {
@@ -250,6 +254,7 @@ fn compute_dynamic_range(audio: &DecodedAudio) -> f64 {
 }
 
 /// Stereo width: 0.0 = mono, 1.0 = full stereo, >1.0 = out-of-phase content.
+
 fn compute_stereo_width(audio: &DecodedAudio) -> f64 {
     if audio.channels < 2 {
         return 0.0;
@@ -282,6 +287,7 @@ fn compute_stereo_width(audio: &DecodedAudio) -> f64 {
 }
 
 /// Compute energy in 7 frequency bands using a basic DFT approach.
+
 fn compute_frequency_bands(audio: &DecodedAudio) -> FrequencyBands {
     // Use mono mixdown
     let mono: Vec<f64> = if audio.channels >= 2 {
@@ -399,4 +405,207 @@ fn compute_frequency_bands(audio: &DecodedAudio) -> FrequencyBands {
         presence: to_db(band_energies[5]),
         brilliance: to_db(band_energies[6]),
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::decode::DecodedAudio;
+    use super::*;
+    use crate::types::FrequencyBands;
+
+    /// Helper to create test audio data.
+    fn create_test_audio(samples: Vec<f32>, sample_rate: u32, channels: u16) -> DecodedAudio {
+        let total_frames = samples.len() as u64 / channels as u64;
+        DecodedAudio {
+            samples,
+            sample_rate,
+            channels,
+            total_frames,
+        }
+    }
+
+    /// Helper to create sine wave samples.
+    fn create_sine_wave(frequency: f32, duration_secs: f64, sample_rate: u32, amplitude: f32) -> Vec<f32> {
+        let num_samples = (sample_rate as f64 * duration_secs) as usize;
+        (0..num_samples)
+            .map(|i| {
+                let t = i as f32 / sample_rate as f32;
+                amplitude * (2.0 * std::f32::consts::PI * frequency * t).sin()
+            })
+            .collect()
+    }
+
+    /// Test RMS calculation with silent audio.
+    #[test]
+    fn test_rms_silent() {
+        let audio = create_test_audio(vec![0.0; 1000], 48000, 2);
+        let rms = compute_rms_db(&audio.samples);
+        assert_eq!(rms, -100.0);
+    }
+
+    /// Test RMS calculation with full scale audio.
+    #[test]
+    fn test_rms_full_scale() {
+        let samples = vec![1.0; 1000];
+        let rms = compute_rms_db(&samples);
+        assert!((rms - 0.0).abs() < 0.1);
+    }
+
+    /// Test RMS calculation with -6 dB audio.
+    #[test]
+    fn test_rms_minus_6db() {
+        let samples = vec![0.5; 1000]; // 0.5 = -6 dB
+        let rms = compute_rms_db(&samples);
+        assert!((rms - (-6.02)).abs() < 0.1);
+    }
+
+    /// Test Peak calculation with silent audio.
+    #[test]
+    fn test_peak_silent() {
+        let audio = create_test_audio(vec![0.0; 1000], 48000, 2);
+        let peak = compute_peak_db(&audio.samples);
+        assert_eq!(peak, -100.0);
+    }
+
+    /// Test Peak calculation with full scale audio.
+    #[test]
+    fn test_peak_full_scale() {
+        let samples = vec![1.0; 1000];
+        let peak = compute_peak_db(&samples);
+        assert!((peak - 0.0).abs() < 0.1);
+    }
+
+    /// Test Peak calculation with -3 dB audio.
+    #[test]
+    fn test_peak_minus_3db() {
+        let samples = vec![0.707; 1000]; // 0.707 ≈ -3 dB
+        let peak = compute_peak_db(&samples);
+        assert!((peak - (-3.01)).abs() < 0.1);
+    }
+
+    /// Test Peak calculation with clipped audio.
+    #[test]
+    fn test_peak_clipped() {
+        let samples = vec![1.5; 1000]; // Clipped beyond full scale
+        let peak = compute_peak_db(&samples);
+        assert!(peak > 0.0); // Should be positive dB for clipped audio
+    }
+
+    /// Test stereo width calculation with mono audio.
+    #[test]
+    fn test_stereo_width_mono() {
+        // Mono samples (L = R for each frame)
+        let samples: Vec<f32> = (0..1000)
+            .flat_map(|i| {
+                let value = (i as f32 / 1000.0) * 0.5;
+                [value, value] // L = R
+            })
+            .collect();
+
+        let audio = create_test_audio(samples, 48000, 2);
+        let width = compute_stereo_width(&audio);
+        assert!((width - 0.0).abs() < 0.01, "Mono audio should have 0 stereo width");
+    }
+
+    /// Test stereo width calculation with wide stereo.
+    #[test]
+    fn test_stereo_width_wide() {
+        // Wide stereo (L = -R for each frame)
+        let samples: Vec<f32> = (0..1000)
+            .flat_map(|i| {
+                let value = (i as f32 / 1000.0) * 0.5;
+                [value, -value] // L = -R (maximum width)
+            })
+            .collect();
+
+        let audio = create_test_audio(samples, 48000, 2);
+        let width = compute_stereo_width(&audio);
+        assert!(width > 0.8, "Wide stereo should have high width value");
+    }
+
+    /// Test LUFS calculation with silent audio.
+    #[test]
+    fn test_lufs_silent() {
+        let audio = create_test_audio(vec![0.0; 48000], 48000, 2);
+        let lufs = compute_lufs(&audio);
+        assert_eq!(lufs, -100.0);
+    }
+
+    /// Test dynamic range calculation.
+    #[test]
+    fn test_dynamic_range() {
+        // Audio with varying levels for better dynamic range detection
+        let mut samples = Vec::new();
+
+        // Very quiet section
+        for _ in 0..12000 {
+            samples.push(0.001);
+        }
+
+        // Moderate section
+        for _ in 0..12000 {
+            samples.push(0.1);
+        }
+
+        // Loud section
+        for _ in 0..12000 {
+            samples.push(0.5);
+        }
+
+        // Interleaved stereo
+        let stereo_samples: Vec<f32> = samples.iter().flat_map(|&s| [s, s]).collect();
+
+        let audio = create_test_audio(stereo_samples, 48000, 2);
+        let dr = compute_dynamic_range(&audio);
+
+        // Dynamic range should be non-negative
+        assert!(dr >= 0.0, "Dynamic range should be non-negative");
+    }
+
+    /// Test frequency band calculation.
+    #[test]
+    fn test_frequency_bands() {
+        // Create 1 kHz tone at -10 dB with more samples for better DFT resolution
+        let samples = create_sine_wave(1000.0, 2.0, 48000, 0.5);
+
+        let audio = create_test_audio(samples, 48000, 1);
+        let bands = compute_frequency_bands(&audio);
+
+        // Just verify that the bands are calculated (not all -100)
+        let total_energy = bands.sub_bass + bands.bass + bands.low_mid + bands.mid
+            + bands.upper_mid + bands.presence + bands.brilliance;
+        assert!(total_energy > -600.0, "Should have some energy in frequency bands");
+    }
+
+    /// Test empty sample handling.
+    #[test]
+    fn test_empty_samples() {
+        let audio = create_test_audio(vec![], 48000, 2);
+
+        let rms = compute_rms_db(&audio.samples);
+        let peak = compute_peak_db(&audio.samples);
+        let lufs = compute_lufs(&audio);
+
+        assert_eq!(rms, -100.0);
+        assert_eq!(peak, -100.0);
+        assert_eq!(lufs, -100.0);
+    }
+
+    /// Test single channel audio.
+    #[test]
+    fn test_single_channel() {
+        let samples = create_sine_wave(440.0, 0.5, 48000, 0.5);
+        let audio = create_test_audio(samples, 48000, 1);
+
+        // Should not panic with single channel
+        let lufs = compute_lufs(&audio);
+        let dr = compute_dynamic_range(&audio);
+        let bands = compute_frequency_bands(&audio);
+
+        assert!(lufs > -100.0, "LUFS should be calculated");
+        assert!(dr >= 0.0, "Dynamic range should be non-negative");
+        // Just verify bands are calculated, not checking specific energy
+        assert!(bands.bass > -100.0, "Bass band should be calculated");
+    }
+
 }
