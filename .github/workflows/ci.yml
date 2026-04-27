@@ -2,6 +2,8 @@
 #
 # Runs on every push and pull request.
 # Tests: Rust workspace (cargo test) + Vue frontend (vite build)
+# Security: cargo-audit, npm audit, cargo-deny
+# Coverage: cargo-llvm-cov
 
 name: CI
 
@@ -57,6 +59,38 @@ jobs:
 
       - name: Run cargo clippy
         run: cargo clippy -p mastering-core -p mastering-cli -- -D warnings
+        continue-on-error: true
+
+  # -----------------------------------------------------------------------
+  #  Security scanning
+  # -----------------------------------------------------------------------
+  security:
+    name: Security Audit
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: Run cargo audit
+        run: cargo audit
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Run npm audit
+        run: npm audit --audit-level=high
         continue-on-error: true
 
   # -----------------------------------------------------------------------
