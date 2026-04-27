@@ -179,6 +179,8 @@ impl MasteringJob {
 
 /// Execute the full mastering pipeline.
 pub async fn run(job: &MasteringJob, config: &Config) -> Result<MasteringResult> {
+    let pipeline_start = std::time::Instant::now();
+
     // Step 0: Validate input
     validate_input(&job.input_path)?;
 
@@ -198,10 +200,14 @@ pub async fn run(job: &MasteringJob, config: &Config) -> Result<MasteringResult>
     info!("  Target LUFS: {target_lufs}");
 
     // Step 1: Pre-analysis
+    let analysis_start = std::time::Instant::now();
     info!("Analyzing input audio...");
     let pre_analysis = analysis::analyze_file(&job.input_path)
         .await
         .context("Pre-analysis of input audio failed")?;
+
+    let analysis_elapsed = analysis_start.elapsed();
+    info!("Pre-analysis completed in {:.2}s", analysis_elapsed.as_secs_f64());
 
     info!(
         "  LUFS: {:.1}, Peak: {:.1} dB, RMS: {:.1} dB, Stereo Width: {:.2}",
@@ -244,13 +250,19 @@ pub async fn run(job: &MasteringJob, config: &Config) -> Result<MasteringResult>
     };
 
     // Step 3: Process
+    let process_start = std::time::Instant::now();
     info!("Processing with {} backend...", engine.name());
     let backend_output = engine
         .process(&opts)
         .await
         .context("Backend processing failed")?;
 
-    info!("{}", backend_output.message);
+    let process_elapsed = process_start.elapsed();
+    info!(
+        "Backend processing completed in {:.2}s ({})",
+        process_elapsed.as_secs_f64(),
+        engine.name()
+    );
 
     // Step 4: Post-analysis (if output file was created)
     let post_analysis = if backend_output.output_path.exists() {
@@ -278,7 +290,14 @@ pub async fn run(job: &MasteringJob, config: &Config) -> Result<MasteringResult>
         convert_format(&backend_output.output_path, &output_path, final_format)?;
     }
 
-    info!("Mastering complete: {}", output_path.display());
+    let total_elapsed = pipeline_start.elapsed();
+    info!(
+        "Mastering complete: {} (total: {:.2}s, analysis: {:.2}s, processing: {:.2}s)",
+        output_path.display(),
+        total_elapsed.as_secs_f64(),
+        analysis_elapsed.as_secs_f64(),
+        process_elapsed.as_secs_f64()
+    );
 
     Ok(MasteringResult {
         output_path,

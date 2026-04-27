@@ -1,5 +1,6 @@
 import { reactive, computed, ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
+import { trackProcessing, trackError, trackFeature } from "./useAnalytics.js";
 
 let trackIdCounter = 0;
 
@@ -68,6 +69,7 @@ async function loadPresets() {
 
 function addTracks(paths) {
   const newPaths = Array.isArray(paths) ? paths : [paths];
+  trackFeature("tracks_imported", `${newPaths.length} tracks`);
   for (const p of newPaths) {
     if (state.tracks.some((t) => t.path === p)) continue;
     const name = p.split("/").pop().split("\\").pop();
@@ -101,11 +103,13 @@ function selectTrack(id) {
 
 function setReferenceFile(path) {
   state.referenceFile = path;
+  if (path) trackFeature("reference_set");
 }
 
 async function analyzeTrack(track) {
   track.status = "analyzing";
   track.error = null;
+  const start = Date.now();
   try {
     const [analysis, waveform] = await Promise.all([
       invoke("analyze_file", { path: track.path }),
@@ -114,9 +118,12 @@ async function analyzeTrack(track) {
     track.analysis = analysis;
     track.waveform = waveform;
     track.status = "analyzed";
+    trackProcessing("analysis", "native", Date.now() - start, true);
   } catch (e) {
     track.status = "error";
     track.error = `Analysis failed: ${e}`;
+    trackProcessing("analysis", "native", Date.now() - start, false);
+    trackError("ANALYSIS_FAILED", e);
   }
 }
 
@@ -162,11 +169,14 @@ function buildRequest(track, outputPath) {
 async function masterTrack(track, outputPath) {
   track.status = "mastering";
   track.error = null;
+  const start = Date.now();
   try {
     const request = buildRequest(track, outputPath);
     const result = await invoke("master_file", { request });
     track.result = result;
     track.status = "done";
+    trackProcessing("mastering", state.selectedBackend, Date.now() - start, true);
+    trackFeature("mastering_complete", result.backend_used);
     // Update analysis with post if available
     if (result.post_analysis) {
       track.postAnalysis = result.post_analysis;
@@ -180,6 +190,8 @@ async function masterTrack(track, outputPath) {
   } catch (e) {
     track.status = "error";
     track.error = `Mastering failed: ${e}`;
+    trackProcessing("mastering", state.selectedBackend, Date.now() - start, false);
+    trackError("MASTERING_FAILED", e, { backend: state.selectedBackend });
   }
 }
 
