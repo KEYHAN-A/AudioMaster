@@ -363,3 +363,107 @@ fn parse_mastering_params(response: &str) -> Result<MasteringParams> {
     serde_json::from_str::<MasteringParams>(json_str)
         .context("Failed to parse AI response as mastering parameters. The AI may have returned an unexpected format.")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_mastering_params_valid_json() {
+        let response = r#"{
+  "eq": [],
+  "compression": {"threshold_db": -20.0, "ratio": 4.0, "attack_ms": 5.0, "release_ms": 100.0, "knee_db": 2.0, "makeup_gain_db": 0.0},
+  "limiter": {"enabled": true, "ceiling_db": -1.0, "release_ms": 100.0},
+  "stereo": {"width": 1.0, "balance": 0.0},
+  "target_lufs": -14.0
+}"#;
+        let result = parse_mastering_params(response);
+        assert!(result.is_ok(), "Should parse valid JSON");
+        let params = result.unwrap();
+        assert_eq!(params.target_lufs, -14.0);
+    }
+
+    #[test]
+    fn test_parse_mastering_params_with_markdown() {
+        let response = r#"Here are the parameters:
+
+```json
+{
+  "eq": [],
+  "compression": {"threshold_db": -20.0, "ratio": 4.0, "attack_ms": 5.0, "release_ms": 100.0, "knee_db": 2.0, "makeup_gain_db": 0.0},
+  "limiter": {"enabled": true, "ceiling_db": -1.0, "release_ms": 100.0},
+  "stereo": {"width": 1.0, "balance": 0.0},
+  "target_lufs": -14.0
+}
+```
+
+I recommend using these settings."#;
+        let result = parse_mastering_params(response);
+        assert!(result.is_ok(), "Should parse JSON from markdown");
+        let params = result.unwrap();
+        assert_eq!(params.target_lufs, -14.0);
+    }
+
+    #[test]
+    fn test_parse_mastering_params_invalid() {
+        let response = "I couldn't process that audio file.";
+        let result = parse_mastering_params(response);
+        assert!(result.is_err(), "Should fail on non-JSON response");
+    }
+
+    #[test]
+    fn test_build_mastering_prompt_basic() {
+        let opts = MasteringOptions {
+            input_path: std::path::PathBuf::from("/test/input.wav"),
+            output_path: std::path::PathBuf::from("/test/output.wav"),
+            reference_path: None,
+            bit_depth: 24,
+            target_lufs: -16.0,
+            no_limiter: false,
+            preset: None,
+        };
+
+        let prompt = build_mastering_prompt("{}", &opts);
+        assert!(prompt.contains("16"), "Should contain LUFS value");
+        assert!(prompt.contains("false"), "Should contain no_limiter flag");
+        assert!(!prompt.contains("Preset"), "Should not contain preset when None");
+    }
+
+    #[test]
+    fn test_build_mastering_prompt_with_preset() {
+        let opts = MasteringOptions {
+            input_path: std::path::PathBuf::from("/test/input.wav"),
+            output_path: std::path::PathBuf::from("/test/output.wav"),
+            reference_path: None,
+            bit_depth: 24,
+            target_lufs: -14.0,
+            no_limiter: true,
+            preset: Some(crate::types::Preset::Streaming),
+        };
+
+        let prompt = build_mastering_prompt("{}", &opts);
+        // Preset Display is lowercase (streaming)
+        assert!(prompt.contains("streaming"), "Should contain preset name");
+        assert!(prompt.contains("14"), "Should contain LUFS value");
+        assert!(prompt.contains("true"), "Should contain no_limiter flag");
+    }
+
+    #[test]
+    fn test_backend_with_provider() {
+        let backend = AiBackend::new(&Config::default());
+        let ollama_backend = backend.clone().with_provider(AiProvider::Ollama);
+        assert_eq!(ollama_backend.provider, AiProvider::Ollama);
+    }
+
+    #[test]
+    fn test_backend_check_available() {
+        let backend = AiBackend::new(&Config::default());
+        // This test just verifies the function doesn't panic
+        // In a real scenario, we'd mock the Python process
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt.block_on(backend.check_available());
+        // Result depends on whether Python is installed, so we just check it returns
+        drop(result);
+    }
+}
+
