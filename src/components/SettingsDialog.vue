@@ -234,6 +234,20 @@ async function saveSettings() {
 
             <!-- Hardware -->
             <template v-if="activeTab === 'hardware'">
+              <div class="form-group">
+                <label class="form-label">Python Path</label>
+                <input
+                  type="text"
+                  class="form-input mono"
+                  v-model="localConfig.backends.matchering.python_path"
+                  @input="localConfig.backends.local_ml.python_path = localConfig.backends.matchering.python_path"
+                  placeholder="python3"
+                />
+                <p class="form-hint">
+                  Path to the Python interpreter used for DSP processing (Matchering, AI mastering, Local ML). On Windows, "python3" often resolves to the Microsoft Store stub — use the full path to your real interpreter instead, e.g. C:\Python312\python.exe
+                </p>
+              </div>
+
               <div class="section-header">
                 <span class="section-title">GPU & VRAM Detection</span>
                 <button

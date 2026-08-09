@@ -17,7 +17,7 @@ pub fn analyze(path: &Path, audio: &DecodedAudio) -> Result<AudioAnalysis> {
         sample_rate: audio.sample_rate,
         channels: audio.channels,
         duration_secs: audio.duration_secs(),
-        bit_depth: None,
+        bit_depth: audio.bit_depth,
         format,
     };
 
@@ -421,6 +421,7 @@ mod tests {
             sample_rate,
             channels,
             total_frames,
+            bit_depth: None,
         }
     }
 

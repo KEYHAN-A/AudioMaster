@@ -162,7 +162,9 @@ impl std::str::FromStr for Backend {
 #[serde(rename_all = "snake_case")]
 pub enum AiProvider {
     Ollama,
+    #[serde(alias = "lmstudio")]
     LmStudio,
+    #[serde(alias = "keyhanstudio", alias = "keyhan")]
     KeyhanStudio,
     OpenAi,
     Anthropic,

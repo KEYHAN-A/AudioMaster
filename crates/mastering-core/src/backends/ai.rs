@@ -132,6 +132,7 @@ impl AiBackend {
         let body = serde_json::json!({
             "model": self.ollama_model,
             "prompt": prompt,
+            "system": SYSTEM_PROMPT,
             "stream": false,
             "format": "json",
         });
@@ -296,7 +297,13 @@ impl AiBackend {
                 {"role": "system", "content": LMSTUDIO_SYSTEM_PROMPT},
                 {"role": "user", "content": prompt}
             ],
-            "response_format": { "type": "json_object" },
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "mastering_params",
+                    "schema": mastering_params_json_schema(),
+                },
+            },
             "temperature": 0.3,
         });
 
@@ -468,6 +475,63 @@ STEP 3 - OUTPUT this exact JSON structure:
 band_type must be one of: low_shelf, high_shelf, peak, low_pass, high_pass
 Value ranges: EQ gain -6 to +6 dB, Q 0.3 to 5.0, compression ratio 1.0 to 6.0, stereo width 0.5 to 1.5.
 IMPORTANT: Return ONLY the JSON object. No other text."#;
+
+/// JSON Schema for `MasteringParams`, used to constrain LM Studio's structured output
+/// so the local model can't drift away from the fields the parser expects.
+fn mastering_params_json_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "properties": {
+            "eq": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "frequency": { "type": "number" },
+                        "gain_db": { "type": "number" },
+                        "q": { "type": "number" },
+                        "band_type": {
+                            "type": "string",
+                            "enum": ["low_shelf", "high_shelf", "peak", "low_pass", "high_pass"]
+                        }
+                    },
+                    "required": ["frequency", "gain_db", "q", "band_type"]
+                }
+            },
+            "compression": {
+                "type": "object",
+                "properties": {
+                    "threshold_db": { "type": "number" },
+                    "ratio": { "type": "number" },
+                    "attack_ms": { "type": "number" },
+                    "release_ms": { "type": "number" },
+                    "knee_db": { "type": "number" },
+                    "makeup_gain_db": { "type": "number" }
+                },
+                "required": ["threshold_db", "ratio", "attack_ms", "release_ms", "knee_db", "makeup_gain_db"]
+            },
+            "limiter": {
+                "type": "object",
+                "properties": {
+                    "enabled": { "type": "boolean" },
+                    "ceiling_db": { "type": "number" },
+                    "release_ms": { "type": "number" }
+                },
+                "required": ["enabled", "ceiling_db", "release_ms"]
+            },
+            "stereo": {
+                "type": "object",
+                "properties": {
+                    "width": { "type": "number" },
+                    "balance": { "type": "number" }
+                },
+                "required": ["width", "balance"]
+            },
+            "target_lufs": { "type": "number" }
+        },
+        "required": ["eq", "compression", "limiter", "stereo", "target_lufs"]
+    })
+}
 
 fn build_mastering_prompt(analysis_json: &str, opts: &MasteringOptions) -> String {
     let preset_info = opts
