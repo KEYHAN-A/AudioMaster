@@ -14,6 +14,7 @@ pub struct DecodedAudio {
     pub sample_rate: u32,
     pub channels: u16,
     pub total_frames: u64,
+    pub bit_depth: Option<u16>,
 }
 
 impl DecodedAudio {
@@ -71,6 +72,7 @@ pub fn decode_audio(path: &Path) -> Result<DecodedAudio> {
         .channels
         .map(|c| c.count() as u16)
         .unwrap_or(2);
+    let bit_depth = codec_params.bits_per_sample.map(|b| b as u16);
 
     let dec_opts = DecoderOptions::default();
     let mut decoder = symphonia::default::get_codecs()
@@ -115,5 +117,6 @@ pub fn decode_audio(path: &Path) -> Result<DecodedAudio> {
         sample_rate,
         channels,
         total_frames,
+        bit_depth,
     })
 }
