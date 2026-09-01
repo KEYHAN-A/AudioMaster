@@ -2181,7 +2181,7 @@ dependencies = [
 
 [[package]]
 name = "mastering-cli"
-version = "1.2.0"
+version = "1.2.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -2196,7 +2196,7 @@ dependencies = [
 
 [[package]]
 name = "mastering-core"
-version = "1.2.0"
+version = "1.2.1"
 dependencies = [
  "anyhow",
  "dirs",
@@ -2218,7 +2218,7 @@ dependencies = [
 
 [[package]]
 name = "mastering-tauri"
-version = "1.2.0"
+version = "1.2.1"
 dependencies = [
  "anyhow",
  "dirs",
