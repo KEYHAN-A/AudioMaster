@@ -1,6 +1,39 @@
 # AudioMaster
 
-AudioMaster is a local-first music mastering engine and desktop application by KeyhanStudio. The production path is implemented in Rust. AI providers may advise a mastering plan, but they never process audio and every proposed parameter is validated before native DSP rendering.
+[![Release](https://img.shields.io/badge/release-v1.2.1-38bdf8)](https://github.com/KEYHAN-A/AudioMaster/releases/tag/v1.2.1)
+[![CI](https://github.com/KEYHAN-A/AudioMaster/actions/workflows/ci.yml/badge.svg)](https://github.com/KEYHAN-A/AudioMaster/actions/workflows/ci.yml)
+[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-a78bfa)](https://github.com/KEYHAN-A/AudioMaster/releases/latest)
+[![License](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
+[![Website](https://img.shields.io/badge/website-audiomaster.keyhan.info-22c55e)](https://audiomaster.keyhan.info)
+
+AudioMaster is a local-first music mastering engine and desktop application by KEYHAN STUDIO. The production path is implemented in Rust. AI providers may advise a mastering plan, but they never process audio and every proposed parameter is validated before native DSP rendering.
+
+**Current production release:** [AudioMaster v1.2.1](https://github.com/KEYHAN-A/AudioMaster/releases/tag/v1.2.1)
+
+**Unified account:** [core.keyhan.info/account](https://core.keyhan.info/account)
+
+## AudioMaster v1.2.1
+
+This release completes the production migration to the standalone KEYHAN STUDIO Core platform:
+
+- Unified KEYHAN STUDIO authentication and account management through `core.keyhan.info`.
+- Revisioned cloud settings and preset synchronization, early-access registration, and feedback submission through Core.
+- Production mastering advice through the bounded KEYHAN STUDIO advisor while native DSP remains authoritative.
+- Website sign-in and newsletter subscription through the same account platform.
+- Automatic migration of saved legacy AudioMaster API settings to the Core endpoint.
+- Verified native installers for macOS, Windows, and Linux.
+
+Existing desktop users should install v1.2.1 to move their authentication and cloud data to KEYHAN STUDIO Core.
+
+## Download
+
+| Platform | Package |
+| --- | --- |
+| macOS — Universal | [Download DMG](https://github.com/KEYHAN-A/AudioMaster/releases/latest/download/AudioMaster_1.2.1_universal.dmg) |
+| Windows — x64 | [Download installer](https://github.com/KEYHAN-A/AudioMaster/releases/latest/download/AudioMaster_1.2.1_x64-setup.exe) |
+| Linux — x86_64 | [Download AppImage](https://github.com/KEYHAN-A/AudioMaster/releases/latest/download/AudioMaster_1.2.1_amd64.AppImage) |
+
+Additional Debian, RPM, MSI, app archive, and CLI artifacts are available on the [release page](https://github.com/KEYHAN-A/AudioMaster/releases/tag/v1.2.1).
 
 ## Current capabilities
 
@@ -10,7 +43,7 @@ AudioMaster is a local-first music mastering engine and desktop application by K
 - Transactional album mastering that retains a bounded amount of intentional track-to-track loudness contrast.
 - Optional reference matching and experimental Python ML compatibility backends.
 - Constrained Ollama, LM Studio, KeyhanStudio, OpenAI, and Anthropic advisors; native DSP remains authoritative.
-- KeyhanStudio device-code sign-in, OS-vault refresh-token storage, revisioned settings/preset sync, early access, and feedback. Audio is never included in cloud request types.
+- KEYHAN STUDIO Core device-code sign-in, OS-vault refresh-token storage, revisioned settings/preset sync, early access, and feedback. Audio is never included in cloud request types.
 - CLI and Vue/Tauri desktop interfaces.
 
 ## Requirements
@@ -62,7 +95,7 @@ Use `cargo run -p mastering-cli -- --help` for all options.
 - `python`: optional compatibility adapters; not part of the default production render path.
 - `docs`: user, engineering, qualification, and operations guidance.
 
-The KEYHAN STUDIO Core implementation lives in the standalone `keyhan-studio-core` repository. Its sync endpoint rejects audio-like fields and local file paths.
+The standalone KEYHAN STUDIO Core service provides shared authentication, account sessions, entitlements, product data, and cloud APIs. Its AudioMaster sync endpoint rejects audio-like fields and local file paths; mastering audio remains on the user's machine.
 
 ## Release policy
 
