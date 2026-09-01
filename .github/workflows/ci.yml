@@ -53,6 +53,14 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libgtk-3-dev ffmpeg
 
+      - name: Install macOS media dependency
+        if: runner.os == 'macOS'
+        run: brew install ffmpeg
+
+      - name: Install Windows media dependency
+        if: runner.os == 'Windows'
+        run: choco install ffmpeg --no-progress -y
+
       - name: Check formatting
         run: cargo fmt --all -- --check
 

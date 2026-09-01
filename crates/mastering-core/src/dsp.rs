@@ -649,7 +649,7 @@ fn apply_low_end_mono_guard(audio: &mut DecodedAudio, cutoff_hz: f64) {
     let coefficient =
         1.0 - (-2.0 * std::f64::consts::PI * cutoff_hz / audio.sample_rate as f64).exp();
     let mut low_side = 0.0f64;
-    for frame in audio.samples.chunks_exact_mut(2) {
+    for frame in audio.samples.as_chunks_mut::<2>().0 {
         let left = frame[0] as f64;
         let right = frame[1] as f64;
         let mid = (left + right) * 0.5;
