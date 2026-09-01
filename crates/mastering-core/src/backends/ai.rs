@@ -1,16 +1,26 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use std::process::Command;
 use tracing::{debug, info};
 
 use super::{BackendOutput, MasteringOptions};
 use crate::analysis;
 use crate::config::Config;
-use crate::types::{AiProvider, MasteringParams};
+use crate::dsp;
+use crate::types::{AiProvider, MasteringParams, MasteringPlan};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LmStudioModel {
     pub id: String,
+    #[serde(default)]
+    pub display_name: Option<String>,
+    #[serde(default)]
+    pub size_gb: Option<f64>,
+    #[serde(default)]
+    pub quant: Option<String>,
+    #[serde(default)]
+    pub architecture: Option<String>,
+    #[serde(default)]
+    pub loaded: Option<bool>,
 }
 
 #[derive(Debug, Clone)]
@@ -26,8 +36,6 @@ pub struct AiBackend {
     openai_model: String,
     anthropic_api_key: String,
     anthropic_model: String,
-    python_path: String,
-    scripts_dir: std::path::PathBuf,
 }
 
 impl AiBackend {
@@ -38,14 +46,19 @@ impl AiBackend {
             ollama_model: config.ai.ollama.model.clone(),
             lmstudio_endpoint: config.ai.lmstudio.endpoint.clone(),
             lmstudio_model: config.ai.lmstudio.model.clone(),
-            keyhanstudio_endpoint: config.ai.keyhanstudio.endpoint.clone(),
+            keyhanstudio_endpoint: if config.ai.keyhanstudio.endpoint.is_empty() {
+                format!(
+                    "{}/audiomaster/advice",
+                    config.cloud.endpoint.trim_end_matches('/')
+                )
+            } else {
+                config.ai.keyhanstudio.endpoint.clone()
+            },
             keyhanstudio_api_key: config.ai.keyhanstudio.api_key.clone(),
             openai_api_key: config.ai.openai.api_key.clone(),
             openai_model: config.ai.openai.model.clone(),
             anthropic_api_key: config.ai.anthropic.api_key.clone(),
             anthropic_model: config.ai.anthropic.model.clone(),
-            python_path: config.backends.matchering.python_path.clone(),
-            scripts_dir: Config::python_scripts_dir(),
         }
     }
 
@@ -58,8 +71,15 @@ impl AiBackend {
         info!("AI-assisted mastering using provider: {}", self.provider);
 
         // Step 1: Analyze the input audio
-        let analysis = analysis::analyze_file(&opts.input_path).await?;
-        let analysis_json = serde_json::to_string_pretty(&analysis)?;
+        let analysis = match &opts.pre_analysis {
+            Some(analysis) => analysis.clone(),
+            None => analysis::analyze_file(&opts.input_path).await?,
+        };
+        let mut advisor_analysis = analysis.clone();
+        // Local paths are not acoustic information and must never cross a
+        // remote-advisor boundary.
+        advisor_analysis.metadata.path.clear();
+        let analysis_json = serde_json::to_string_pretty(&advisor_analysis)?;
         debug!("Audio analysis:\n{analysis_json}");
 
         // Step 2: Ask the AI for mastering parameters
@@ -68,39 +88,38 @@ impl AiBackend {
         debug!("AI response:\n{ai_response}");
 
         // Step 3: Parse mastering parameters from AI response
-        let params = parse_mastering_params(&ai_response)?;
-        let _params_json = serde_json::to_string(&params)?;
+        let proposed = parse_mastering_params(&ai_response)?;
+        let validated = dsp::validate_params(
+            proposed,
+            analysis.metadata.sample_rate,
+            opts.target_lufs,
+            opts.no_limiter,
+        )?;
+        let mut params = validated.params;
 
-        // Step 4: Apply parameters via Python DSP bridge
-        let script = self.scripts_dir.join("apply_fx.py");
-        anyhow::ensure!(
-            script.exists(),
-            "DSP bridge script not found at: {}",
-            script.display()
-        );
-
-        let request = serde_json::json!({
-            "input": opts.input_path.to_string_lossy(),
-            "output": opts.output_path.to_string_lossy(),
-            "params": params,
-            "bit_depth": opts.bit_depth,
-        });
-
-        let output = Command::new(&self.python_path)
-            .arg(&script)
-            .arg(request.to_string())
-            .output()
-            .with_context(|| {
-                format!(
-                    "Failed to run DSP bridge. Is Python installed at '{}'?",
-                    self.python_path
-                )
-            })?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!("DSP processing failed:\n{stderr}");
+        // Step 4: Apply the validated plan with the deterministic native engine.
+        let input = opts.input_path.clone();
+        let output = opts.output_path.clone();
+        let bit_depth = opts.bit_depth;
+        let control = opts.control.clone();
+        let mut warnings = validated.warnings;
+        if matches!(
+            opts.delivery_format,
+            crate::types::AudioFormat::Mp3 | crate::types::AudioFormat::Aac
+        ) && params.limiter.enabled
+            && params.limiter.ceiling_db > -1.2
+        {
+            params.limiter.ceiling_db = -1.2;
+            warnings.push("Limiter ceiling reduced to -1.2 dBTP for codec headroom".into());
         }
+        let render_params = params.clone();
+        warnings.extend(
+            tokio::task::spawn_blocking(move || {
+                dsp::render_wav_with_control(&input, &output, &render_params, bit_depth, &control)
+            })
+            .await
+            .context("Native DSP worker failed")??,
+        );
 
         info!("AI-assisted mastering completed");
 
@@ -108,10 +127,16 @@ impl AiBackend {
             output_path: opts.output_path.clone(),
             params_applied: Some(params),
             backend_name: format!("ai/{}", self.provider),
-            message: format!(
-                "Mastered using {} AI provider with custom EQ, compression, and limiting",
-                self.provider
-            ),
+            message: if warnings.is_empty() {
+                format!("Mastered using {} advisor and native DSP", self.provider)
+            } else {
+                format!(
+                    "Mastered using {} advisor and native DSP ({} safety adjustments)",
+                    self.provider,
+                    warnings.len()
+                )
+            },
+            warnings,
         })
     }
 
@@ -151,10 +176,7 @@ impl AiBackend {
         }
 
         let parsed: serde_json::Value = serde_json::from_str(&text)?;
-        let response = parsed["response"]
-            .as_str()
-            .unwrap_or(&text)
-            .to_string();
+        let response = parsed["response"].as_str().unwrap_or(&text).to_string();
 
         Ok(response)
     }
@@ -178,7 +200,10 @@ impl AiBackend {
         let mut req = client.post(&self.keyhanstudio_endpoint).json(&body);
 
         if !self.keyhanstudio_api_key.is_empty() {
-            req = req.header("Authorization", format!("Bearer {}", self.keyhanstudio_api_key));
+            req = req.header(
+                "Authorization",
+                format!("Bearer {}", self.keyhanstudio_api_key),
+            );
         }
 
         let resp = req.send().await.context("Calling KeyhanStudio API")?;
@@ -330,7 +355,7 @@ impl AiBackend {
                     .timeout(std::time::Duration::from_secs(3))
                     .build()?;
                 let resp = client.get(&self.ollama_endpoint).send().await;
-                Ok(resp.is_ok())
+                Ok(matches!(resp, Ok(response) if response.status().is_success()))
             }
             AiProvider::LmStudio => {
                 let client = reqwest::Client::builder()
@@ -338,11 +363,9 @@ impl AiBackend {
                     .build()?;
                 let url = self.lmstudio_endpoint.trim_end_matches('/');
                 let resp = client.get(url).send().await;
-                Ok(resp.is_ok())
+                Ok(matches!(resp, Ok(response) if response.status().is_success()))
             }
-            AiProvider::KeyhanStudio => {
-                Ok(!self.keyhanstudio_endpoint.is_empty())
-            }
+            AiProvider::KeyhanStudio => Ok(!self.keyhanstudio_endpoint.is_empty()),
             AiProvider::OpenAi => Ok(!self.openai_api_key.is_empty()),
             AiProvider::Anthropic => Ok(!self.anthropic_api_key.is_empty()),
         }
@@ -361,14 +384,27 @@ impl AiBackend {
     }
 
     pub async fn lmstudio_models(endpoint: &str) -> Result<Vec<LmStudioModel>> {
+        // Try native LM Studio API first for richer metadata
+        if let Ok(models) = Self::lmstudio_models_native(endpoint).await {
+            if !models.is_empty() {
+                return Ok(models);
+            }
+        }
+
+        // Fallback to OpenAI-compatible endpoint
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(5))
             .build()?;
         let url = format!("{}/models", endpoint.trim_end_matches('/'));
-        let resp = client.get(&url).send().await
+        let resp = client
+            .get(&url)
+            .send()
+            .await
             .context("Failed to connect to LM Studio. Is it running?")?;
 
-        let parsed: serde_json::Value = resp.json().await
+        let parsed: serde_json::Value = resp
+            .json()
+            .await
             .context("Failed to parse LM Studio response")?;
 
         let models = parsed["data"]
@@ -378,18 +414,187 @@ impl AiBackend {
             .iter()
             .filter_map(|m| {
                 let id = m["id"].as_str()?.to_string();
-                Some(LmStudioModel { id })
+                Some(LmStudioModel {
+                    id,
+                    display_name: None,
+                    size_gb: None,
+                    quant: None,
+                    architecture: None,
+                    loaded: None,
+                })
             })
             .collect();
 
         Ok(models)
     }
+
+    /// Fetch models from LM Studio's native REST API for richer metadata.
+    async fn lmstudio_models_native(endpoint: &str) -> Result<Vec<LmStudioModel>> {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(5))
+            .build()?;
+        let base = endpoint.trim_end_matches("/v1").trim_end_matches('/');
+        let url = format!("{base}/api/v1/models");
+
+        let resp = client
+            .get(&url)
+            .send()
+            .await
+            .context("Failed to reach LM Studio native API")?;
+        if !resp.status().is_success() {
+            anyhow::bail!("Native API returned {}", resp.status());
+        }
+
+        let parsed: serde_json::Value = resp
+            .json()
+            .await
+            .context("Failed to parse LM Studio native response")?;
+
+        let models = parsed["data"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|m| {
+                let id = m["id"].as_str()?.to_string();
+                let display_name = m["name"]
+                    .as_str()
+                    .or_else(|| m["display_name"].as_str())
+                    .map(|s| s.to_string());
+                let size_gb = m["size_gb"]
+                    .as_f64()
+                    .or_else(|| m["sizeBytes"].as_f64().map(|b| b / 1_073_741_824.0));
+                let quant = m["quant"]
+                    .as_str()
+                    .or_else(|| m["quantization"].as_str())
+                    .map(|s| s.to_string());
+                let architecture = m["architecture"]
+                    .as_str()
+                    .or_else(|| m["arch"].as_str())
+                    .map(|s| s.to_string());
+                let loaded = m["loaded"].as_bool();
+
+                Some(LmStudioModel {
+                    id,
+                    display_name,
+                    size_gb,
+                    quant,
+                    architecture,
+                    loaded,
+                })
+            })
+            .collect();
+
+        Ok(models)
+    }
+
+    /// Load a model in LM Studio via the native REST API.
+    pub async fn lmstudio_load_model(endpoint: &str, model_id: &str) -> Result<()> {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(120))
+            .build()?;
+        let base = endpoint.trim_end_matches("/v1").trim_end_matches('/');
+
+        // Try native API first: POST /api/v1/models/{identifier}/load
+        let native_url = format!(
+            "{base}/api/v1/models/{}/load",
+            urlencoding::encode(model_id)
+        );
+        let resp = client.post(&native_url).send().await;
+
+        match resp {
+            Ok(r) if r.status().is_success() => {
+                info!("Loaded model {model_id} via native API");
+                return Ok(());
+            }
+            Ok(r) => {
+                debug!("Native load API returned {}, falling back", r.status());
+            }
+            Err(e) => {
+                debug!("Native load API unreachable: {e}, falling back");
+            }
+        }
+
+        // Fallback: POST /api/v0/models/{identifier}/load (alternate path)
+        let alt_url = format!(
+            "{base}/api/v0/models/{}/load",
+            urlencoding::encode(model_id)
+        );
+        let resp = client
+            .post(&alt_url)
+            .send()
+            .await
+            .context("Failed to reach LM Studio model loading endpoint")?;
+
+        if resp.status().is_success() {
+            info!("Loaded model {model_id} via fallback API");
+            Ok(())
+        } else {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            anyhow::bail!("Failed to load model {model_id}: {status} — {text}")
+        }
+    }
+
+    /// Unload a model in LM Studio via the native REST API.
+    pub async fn lmstudio_unload_model(endpoint: &str, model_id: &str) -> Result<()> {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build()?;
+        let base = endpoint.trim_end_matches("/v1").trim_end_matches('/');
+
+        let native_url = format!(
+            "{base}/api/v1/models/{}/unload",
+            urlencoding::encode(model_id)
+        );
+        let resp = client.post(&native_url).send().await;
+
+        match resp {
+            Ok(r) if r.status().is_success() => {
+                info!("Unloaded model {model_id} via native API");
+                return Ok(());
+            }
+            Ok(r) => {
+                debug!("Native unload API returned {}, falling back", r.status());
+            }
+            Err(e) => {
+                debug!("Native unload API unreachable: {e}, falling back");
+            }
+        }
+
+        let alt_url = format!(
+            "{base}/api/v0/models/{}/unload",
+            urlencoding::encode(model_id)
+        );
+        let resp = client
+            .post(&alt_url)
+            .send()
+            .await
+            .context("Failed to reach LM Studio model unloading endpoint")?;
+
+        if resp.status().is_success() {
+            info!("Unloaded model {model_id} via fallback API");
+            Ok(())
+        } else {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            anyhow::bail!("Failed to unload model {model_id}: {status} — {text}")
+        }
+    }
+
+    /// Get currently loaded models in LM Studio.
+    pub async fn lmstudio_loaded_models(endpoint: &str) -> Result<Vec<LmStudioModel>> {
+        let all = Self::lmstudio_models(endpoint).await?;
+        Ok(all.into_iter().filter(|m| m.loaded == Some(true)).collect())
+    }
 }
 
 const SYSTEM_PROMPT: &str = r#"You are a professional audio mastering engineer AI. Given audio analysis data, you provide precise mastering parameters as JSON. You respond ONLY with valid JSON, no explanations.
 
-The JSON must have this exact structure:
+The JSON must have this exact versioned structure:
 {
+  "schema_version": 1,
+  "params": {
   "eq": [
     {"frequency": 80.0, "gain_db": 1.5, "q": 0.7, "band_type": "low_shelf"},
     {"frequency": 3000.0, "gain_db": -0.5, "q": 1.0, "band_type": "peak"},
@@ -413,6 +618,7 @@ The JSON must have this exact structure:
     "balance": 0.0
   },
   "target_lufs": -14.0
+  }
 }
 
 band_type must be one of: low_shelf, high_shelf, peak, low_pass, high_pass
@@ -438,8 +644,10 @@ STEP 2 - RECOMMEND parameters:
 - Stereo: Width 0.9-1.1 is safe. Adjust only if analysis shows problems.
 - Target LUFS: Match the specified target precisely.
 
-STEP 3 - OUTPUT this exact JSON structure:
+STEP 3 - OUTPUT this exact versioned JSON structure:
 {
+  "schema_version": 1,
+  "params": {
   "eq": [
     {"frequency": 80.0, "gain_db": 1.5, "q": 0.7, "band_type": "low_shelf"},
     {"frequency": 3000.0, "gain_db": -0.5, "q": 1.0, "band_type": "peak"},
@@ -463,6 +671,7 @@ STEP 3 - OUTPUT this exact JSON structure:
     "balance": 0.0
   },
   "target_lufs": -14.0
+  }
 }
 
 band_type must be one of: low_shelf, high_shelf, peak, low_pass, high_pass
@@ -484,14 +693,18 @@ Audio Analysis:
 Target LUFS: {target_lufs}
 No Limiter: {no_limiter}{preset_info}
 
-Provide your mastering parameters as a JSON object with keys: eq, compression, limiter, stereo, target_lufs."#,
+Provide a mastering plan with schema_version 1 and a params object containing: eq, compression, limiter, stereo, target_lufs."#,
         target_lufs = opts.target_lufs,
         no_limiter = opts.no_limiter,
     )
 }
 
 fn parse_mastering_params(response: &str) -> Result<MasteringParams> {
-    // Try parsing the response directly
+    // Versioned plans are the production contract. Legacy bare parameters are
+    // accepted during migration so older local models remain usable.
+    if let Ok(plan) = serde_json::from_str::<MasteringPlan>(response) {
+        return plan.validate_version();
+    }
     if let Ok(params) = serde_json::from_str::<MasteringParams>(response) {
         return Ok(params);
     }
@@ -507,8 +720,12 @@ fn parse_mastering_params(response: &str) -> Result<MasteringParams> {
         response
     };
 
-    serde_json::from_str::<MasteringParams>(json_str)
-        .context("Failed to parse AI response as mastering parameters. The AI may have returned an unexpected format.")
+    if let Ok(plan) = serde_json::from_str::<MasteringPlan>(json_str) {
+        return plan.validate_version();
+    }
+    serde_json::from_str::<MasteringParams>(json_str).context(
+        "Failed to parse AI response as a mastering plan. The advisor returned an incompatible format.",
+    )
 }
 
 #[cfg(test)]
@@ -559,21 +776,34 @@ I recommend using these settings."#;
     }
 
     #[test]
+    fn rejects_unknown_mastering_plan_version() {
+        let response = r#"{"schema_version":99,"params":{"eq":[],"compression":{"threshold_db":-20.0,"ratio":2.0,"attack_ms":10.0,"release_ms":100.0,"knee_db":2.0,"makeup_gain_db":0.0},"limiter":{"enabled":true,"ceiling_db":-1.0,"release_ms":100.0},"stereo":{"width":1.0,"balance":0.0},"target_lufs":-14.0}}"#;
+        assert!(parse_mastering_params(response).is_err());
+    }
+
+    #[test]
     fn test_build_mastering_prompt_basic() {
         let opts = MasteringOptions {
             input_path: std::path::PathBuf::from("/test/input.wav"),
             output_path: std::path::PathBuf::from("/test/output.wav"),
             reference_path: None,
             bit_depth: 24,
+            delivery_format: crate::types::AudioFormat::Wav,
             target_lufs: -16.0,
             no_limiter: false,
             preset: None,
+            pre_analysis: None,
+            reference_analysis: None,
+            control: crate::control::ProcessingControl::default(),
         };
 
         let prompt = build_mastering_prompt("{}", &opts);
         assert!(prompt.contains("16"), "Should contain LUFS value");
         assert!(prompt.contains("false"), "Should contain no_limiter flag");
-        assert!(!prompt.contains("Preset"), "Should not contain preset when None");
+        assert!(
+            !prompt.contains("Preset"),
+            "Should not contain preset when None"
+        );
     }
 
     #[test]
@@ -583,9 +813,13 @@ I recommend using these settings."#;
             output_path: std::path::PathBuf::from("/test/output.wav"),
             reference_path: None,
             bit_depth: 24,
+            delivery_format: crate::types::AudioFormat::Wav,
             target_lufs: -14.0,
             no_limiter: true,
             preset: Some(crate::types::Preset::Streaming),
+            pre_analysis: None,
+            reference_analysis: None,
+            control: crate::control::ProcessingControl::default(),
         };
 
         let prompt = build_mastering_prompt("{}", &opts);
@@ -613,4 +847,3 @@ I recommend using these settings."#;
         drop(result);
     }
 }
-

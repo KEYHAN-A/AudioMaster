@@ -2,7 +2,7 @@
 
 ## Architecture Overview
 
-AudioMaster is a hybrid Rust/Python application with a Vue 3 + Tauri v2 frontend.
+AudioMaster is a local-first Rust mastering engine with a Vue 3 + Tauri v2 frontend. Python is retained only for optional compatibility backends.
 
 ```
 ┌─────────────────────────────┐
@@ -21,17 +21,19 @@ AudioMaster is a hybrid Rust/Python application with a Vue 3 + Tauri v2 frontend
 │  mastering-core (Rust lib)  │
 │  crates/mastering-core/     │
 │  ├── analysis/              │  Audio analysis (LUFS, RMS, Peak, etc.)
-│  ├── backends/              │  Processing backends (AI, Matchering, ML)
+│  ├── dsp.rs                 │  Authoritative deterministic DSP
+│  ├── backends/              │  Native, advisory AI, Matchering, ML
 │  ├── pipeline/              │  Orchestration layer
+│  ├── album.rs               │  Transactional album continuity
+│  ├── cloud.rs               │  Audio-free KeyhanStudio protocol
 │  ├── cache.rs               │  Result caching
 │  ├── config.rs              │  Configuration management
 │  ├── error.rs               │  Centralized error types
 │  └── types.rs               │  Shared data types
 └──────────────┬──────────────┘
-               │ subprocess
+               │ optional subprocess
 ┌──────────────▼──────────────┐
-│  Python DSP Layer           │
-│  python/apply_fx.py          │  Pedalboard-based effects
+│  Python Compatibility       │
 │  python/matchering_bridge.py │  Matchering reference matching
 │  python/ml_inference.py      │  Local ML inference
 └─────────────────────────────┘
@@ -56,6 +58,7 @@ npx tauri dev
 ```bash
 # All tests
 cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
 
 # Core only
 cargo test -p mastering-core
@@ -90,13 +93,16 @@ cargo build --release -p mastering-cli
 
 ## Adding a New Backend
 
+The native backend is the production fallback and must remain available without Python or network access.
+
 1. Create a new module in `crates/mastering-core/src/backends/`
 2. Implement the backend struct with `new()`, `process()`, and `check_available()` methods
 3. Add the variant to `MasteringEngine` enum in `backends/mod.rs`
 4. Add dispatch in `MasteringEngine::process()`, `name()`, `check_available()`
 5. Add to `Backend` enum in `types.rs`
 6. Update `commands.rs` backend listing
-7. Add tests in the new module
+7. Render to the requested temporary WAV path; format conversion and publication belong to the pipeline
+8. Add delivered-file and failure-cleanup tests
 
 ## Error Handling
 
@@ -120,14 +126,15 @@ The frontend receives structured `ErrorResponse` with:
 ## Release Process
 
 1. Update version in `Cargo.toml` workspace and `package.json`
-2. Create a git tag: `git tag v1.x.0`
-3. Push tag: `git push origin v1.x.0`
-4. GitHub Actions builds release artifacts
-5. Review draft release on GitHub
-6. Publish release
+2. Complete `docs/dev/production-readiness.md` with release evidence
+3. Create a git tag: `git tag v1.x.0`
+4. Push tag: `git push origin v1.x.0`
+5. GitHub Actions builds release artifacts
+6. Review, sign, notarize, and smoke-test the draft artifacts
+7. Publish the release
 
 ## Monitoring
 
 - **Error Tracking**: Sentry (configure via `SENTRY_DSN` env var)
 - **Logging**: Structured JSON logs in `~/Library/Logs/AudioMaster/` (macOS)
-- **Analytics**: Local-first, opt-in via settings
+- **Privacy**: Audio and local paths are excluded from cloud sync and remote telemetry

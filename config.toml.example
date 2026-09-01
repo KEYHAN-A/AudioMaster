@@ -1,5 +1,5 @@
 [general]
-default_backend = "auto"           # auto, matchering, ai, local-ml
+default_backend = "auto"           # auto, native, matchering, ai, local-ml
 default_bit_depth = 24
 default_format = "wav"
 target_lufs = -14.0
@@ -16,8 +16,15 @@ endpoint = "http://localhost:1234/v1"
 model = ""
 
 [ai.keyhanstudio]
-endpoint = "https://api.keyhanstudio.com"
+endpoint = "https://core.keyhan.info/audiomaster/advice"
 api_key = ""
+
+[cloud]
+endpoint = "https://core.keyhan.info"
+sync_enabled = true
+
+[privacy]
+telemetry_consent = false
 
 [ai.openai]
 api_key = ""

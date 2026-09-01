@@ -56,7 +56,10 @@ pub async fn run(args: AnalyzeArgs) -> Result<()> {
 
     println!("\n{}", "Loudness".bold().yellow());
     println!("  Integrated LUFS:   {:.1}", analysis.lufs_integrated);
-    println!("  Short-term Max:    {:.1} LUFS", analysis.lufs_short_term_max);
+    println!(
+        "  Short-term Max:    {:.1} LUFS",
+        analysis.lufs_short_term_max
+    );
     println!("  RMS:               {:.1} dB", analysis.rms_db);
 
     println!("\n{}", "Dynamics".bold().yellow());
@@ -96,7 +99,7 @@ pub async fn run(args: AnalyzeArgs) -> Result<()> {
 }
 
 fn print_band(label: &str, db: f64) {
-    let bar_len = ((db + 10.0) * 3.0).max(0.0).min(40.0) as usize;
+    let bar_len = ((db + 10.0) * 3.0).clamp(0.0, 40.0) as usize;
     let bar: String = "#".repeat(bar_len);
     let color_bar = if db > -3.0 {
         bar.green()

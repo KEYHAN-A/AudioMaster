@@ -2,6 +2,8 @@
 import { ref, watch } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { useToast } from "../composables/useToast.js";
+import { useLmStudio } from "../composables/useLmStudio.js";
+import { useCloud } from "../composables/useCloud.js";
 
 const props = defineProps({
   visible: Boolean,
@@ -10,19 +12,32 @@ const props = defineProps({
 
 const emit = defineEmits(["close"]);
 const { showToast } = useToast();
+const { state: lm, refresh: refreshLmStudio, loadModel, unloadModel } = useLmStudio();
+const {
+  state: cloud,
+  refreshStatus: refreshCloudStatus,
+  beginLogin,
+  logout: cloudLogout,
+  pullSync,
+  pushSync,
+  submitFeedback,
+  setEarlyAccess,
+} = useCloud();
 
 const localConfig = ref(null);
 const saving = ref(false);
 const activeTab = ref("general");
 
-// LM Studio state
-const lmstudioTesting = ref(false);
-const lmstudioConnectionStatus = ref(null);
-const lmstudioModels = ref([]);
-
 // VRAM state
 const vramDetecting = ref(false);
 const vramInfo = ref(null);
+
+// Recommendations state
+const recommendations = ref(null);
+const loadingRecommendations = ref(false);
+const feedbackCategory = ref("general");
+const feedbackMessage = ref("");
+const diagnosticsOptIn = ref(false);
 
 watch(
   () => props.config,
@@ -32,32 +47,108 @@ watch(
   { immediate: true, deep: true }
 );
 
-async function testLmStudioConnection() {
-  lmstudioTesting.value = true;
+watch(
+  () => props.visible,
+  (visible) => {
+    if (visible) refreshCloudStatus();
+  }
+);
+
+function syncableSettings() {
+  return {
+    schema_version: 1,
+    general: localConfig.value.general,
+    ai: {
+      default_provider: localConfig.value.ai.default_provider,
+      ollama: localConfig.value.ai.ollama,
+      lmstudio: localConfig.value.ai.lmstudio,
+    },
+  };
+}
+
+async function handleCloudLogin() {
   try {
-    const endpoint = localConfig.value?.ai?.lmstudio?.endpoint || null;
-    const result = await invoke("lmstudio_status", { endpoint });
-    lmstudioConnectionStatus.value = result.running;
-    if (result.running) {
-      await refreshLmStudioModels();
-      showToast("LM Studio connected", "success");
-    } else {
-      showToast("LM Studio is not running", "error");
-    }
+    await beginLogin();
+    const document = await pullSync();
+    if (document.settings?.schema_version === 1) applyCloudSettings(document.settings);
+    showToast("Signed in to KeyhanStudio", "success");
   } catch (e) {
-    lmstudioConnectionStatus.value = false;
-    showToast(`Connection failed: ${e}`, "error");
-  } finally {
-    lmstudioTesting.value = false;
+    showToast(`Sign-in failed: ${e}`, "error");
   }
 }
 
-async function refreshLmStudioModels() {
+function applyCloudSettings(settings) {
+  if (settings.general) Object.assign(localConfig.value.general, settings.general);
+  if (settings.ai?.default_provider) localConfig.value.ai.default_provider = settings.ai.default_provider;
+  if (settings.ai?.ollama) Object.assign(localConfig.value.ai.ollama, settings.ai.ollama);
+  if (settings.ai?.lmstudio) Object.assign(localConfig.value.ai.lmstudio, settings.ai.lmstudio);
+}
+
+async function handlePullSync() {
+  try {
+    const document = await pullSync();
+    applyCloudSettings(document.settings || {});
+    showToast("Cloud settings downloaded", "success");
+  } catch (e) {
+    showToast(`Cloud download failed: ${e}`, "error");
+  }
+}
+
+async function handlePushSync() {
+  try {
+    await pushSync(syncableSettings());
+    showToast("Cloud settings updated", "success");
+  } catch (e) {
+    showToast(`Cloud update failed: ${e}`, "error");
+  }
+}
+
+async function handleFeedback() {
+  try {
+    await submitFeedback(feedbackCategory.value, feedbackMessage.value, diagnosticsOptIn.value);
+    feedbackMessage.value = "";
+    showToast("Feedback sent—thank you", "success");
+  } catch (e) {
+    showToast(`Feedback failed: ${e}`, "error");
+  }
+}
+
+async function handleEarlyAccess(event) {
+  try {
+    await setEarlyAccess(event.target.checked);
+    showToast(cloud.earlyAccess ? "Early access enabled" : "Early access disabled", "success");
+  } catch (e) {
+    showToast(`Could not update early access: ${e}`, "error");
+  }
+}
+
+async function testLmStudioConnection() {
+  const endpoint = localConfig.value?.ai?.lmstudio?.endpoint || null;
+  await refreshLmStudio(endpoint);
+  if (lm.online) {
+    showToast("LM Studio connected", "success");
+  } else {
+    showToast("LM Studio is not running", "error");
+  }
+}
+
+async function handleLoadModel(modelId) {
   try {
     const endpoint = localConfig.value?.ai?.lmstudio?.endpoint || null;
-    lmstudioModels.value = await invoke("lmstudio_models", { endpoint });
+    await loadModel(modelId, endpoint);
+    showToast(`Model "${modelId}" loaded`, "success");
   } catch (e) {
-    lmstudioModels.value = [];
+    showToast(`Failed to load model: ${e}`, "error");
+  }
+}
+
+async function handleUnloadModel(modelId) {
+  try {
+    const endpoint = localConfig.value?.ai?.lmstudio?.endpoint || null;
+    await unloadModel(modelId, endpoint);
+    showToast(`Model "${modelId}" unloaded`, "success");
+  } catch (e) {
+    showToast(`Failed to unload model: ${e}`, "error");
   }
 }
 
@@ -70,6 +161,28 @@ async function detectGpu() {
     showToast(`GPU detection failed: ${e}`, "error");
   } finally {
     vramDetecting.value = false;
+  }
+}
+
+async function exportDiagnostics() {
+  try {
+    const path = await invoke("export_diagnostic_bundle");
+    showToast(`Diagnostics exported to ${path}`, "success", 8000);
+  } catch (error) {
+    showToast(`Diagnostics export failed: ${error}`, "error");
+  }
+}
+
+async function loadRecommendations() {
+  loadingRecommendations.value = true;
+  try {
+    const endpoint = localConfig.value?.ai?.lmstudio?.endpoint || null;
+    recommendations.value = await invoke("lmstudio_recommend_models", { endpoint });
+  } catch (e) {
+    recommendations.value = null;
+    showToast(`Failed to get recommendations: ${e}`, "error");
+  } finally {
+    loadingRecommendations.value = false;
   }
 }
 
@@ -86,27 +199,47 @@ async function saveSettings() {
     saving.value = false;
   }
 }
+
+async function clearCredential(provider) {
+  try {
+    await invoke("clear_provider_credential", { provider });
+    localConfig.value.ai[provider].api_key = "";
+    showToast(`${provider} credential removed`, "success");
+  } catch (error) {
+    showToast(`Could not remove credential: ${error}`, "error");
+  }
+}
+
+function modelLabel(m) {
+  let label = m.display_name || m.id;
+  const parts = [];
+  if (m.size_gb) parts.push(`${m.size_gb} GB`);
+  if (m.quant) parts.push(m.quant);
+  if (m.architecture) parts.push(m.architecture);
+  if (parts.length) label += ` (${parts.join(", ")})`;
+  return label;
+}
 </script>
 
 <template>
   <Transition name="scale">
     <div v-if="visible" class="dialog-overlay" @click.self="emit('close')">
-      <div class="dialog" style="width: 620px; max-height: 85vh;">
+      <div class="dialog" style="width: 620px; max-height: 85vh;" role="dialog" aria-modal="true" aria-labelledby="settings-dialog-title">
         <div class="dialog-header">
-          <h2 class="dialog-title gradient-text">Settings</h2>
-          <button class="close-btn" @click="emit('close')">&times;</button>
+          <h2 id="settings-dialog-title" class="dialog-title gradient-text">Settings</h2>
+          <button class="close-btn" aria-label="Close settings" @click="emit('close')">&times;</button>
         </div>
 
         <div v-if="localConfig" class="settings-body">
           <div class="settings-tabs">
             <button
-              v-for="tab in ['general', 'ai', 'lmstudio', 'hardware']"
+            v-for="tab in ['general', 'account', 'ai', 'lmstudio', 'hardware']"
               :key="tab"
               class="tab-btn"
               :class="{ active: activeTab === tab }"
               @click="activeTab = tab"
             >
-              {{ tab === 'lmstudio' ? 'LM Studio' : tab }}
+              {{ tab === 'lmstudio' ? 'LM Studio' : tab === 'hardware' ? 'Hardware' : tab }}
             </button>
           </div>
 
@@ -117,11 +250,13 @@ async function saveSettings() {
                 <label class="form-label">Default Backend</label>
                 <select v-model="localConfig.general.default_backend" class="form-input">
                   <option value="auto">Auto</option>
+                  <option value="native">Native</option>
                   <option value="matchering">Matchering</option>
                   <option value="ai">AI</option>
                   <option value="local_ml">Local ML</option>
                 </select>
               </div>
+              <button class="btn btn-ghost btn-sm" type="button" @click="exportDiagnostics">Export local diagnostics</button>
               <div class="form-group">
                 <label class="form-label">Default Bit Depth</label>
                 <select v-model.number="localConfig.general.default_bit_depth" class="form-input">
@@ -134,6 +269,70 @@ async function saveSettings() {
                 <label class="form-label">Default Target LUFS</label>
                 <input type="number" class="form-input" v-model.number="localConfig.general.target_lufs" step="0.5" />
               </div>
+              <div class="form-group">
+                <label class="toggle-label">
+                  <input type="checkbox" v-model="localConfig.privacy.telemetry_consent" />
+                  <span class="toggle-text">Share anonymized crash diagnostics</span>
+                </label>
+                <p class="form-hint">Opt-in only. Audio, filenames, and local paths are never included.</p>
+              </div>
+            </template>
+
+            <!-- KeyhanStudio Account -->
+            <template v-if="activeTab === 'account'">
+              <div class="section-header">
+                <span class="section-title">KeyhanStudio Cloud</span>
+                <span class="status-badge" :class="cloud.signedIn ? 'status-ok' : 'status-err'">
+                  {{ cloud.signedIn ? 'Signed in' : 'Signed out' }}
+                </span>
+              </div>
+              <p class="form-hint">
+                Audio never leaves this computer. Cloud sync includes app settings, presets, early-access state, and feedback only.
+              </p>
+              <div v-if="cloud.signedIn" class="info-box">
+                Signed in as <strong>{{ cloud.user?.name || cloud.user?.email }}</strong>
+                <span v-if="cloud.earlyAccess" class="model-tag tag-loaded">Early access</span>
+              </div>
+              <label v-if="cloud.signedIn" class="form-hint" style="display:block; margin-top: 12px;">
+                <input :checked="cloud.earlyAccess" type="checkbox" @change="handleEarlyAccess" />
+                Join the AudioMaster early-access program
+              </label>
+              <div v-if="cloud.loginState === 'pending'" class="info-box warn">
+                Enter code <strong class="mono">{{ cloud.userCode }}</strong> in the browser to finish signing in.
+              </div>
+              <div class="input-row" style="margin-top: 12px;">
+                <button v-if="!cloud.signedIn" class="btn" :disabled="cloud.loading" @click="handleCloudLogin">
+                  {{ cloud.loading ? 'Waiting for authorization...' : 'Sign in with KeyhanStudio' }}
+                </button>
+                <template v-else>
+                  <button class="btn btn-sm" @click="handlePullSync">Download settings</button>
+                  <button class="btn btn-sm" @click="handlePushSync">Upload settings</button>
+                  <button class="btn btn-ghost btn-sm" @click="cloudLogout">Sign out</button>
+                </template>
+              </div>
+
+              <template v-if="cloud.signedIn">
+                <div class="section-header" style="margin-top: 24px;">
+                  <span class="section-title">Feedback</span>
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Category</label>
+                  <select v-model="feedbackCategory" class="form-input">
+                    <option value="general">General</option>
+                    <option value="audio-quality">Audio quality</option>
+                    <option value="bug">Bug</option>
+                    <option value="feature">Feature request</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Message</label>
+                  <textarea v-model="feedbackMessage" class="form-input" rows="4" maxlength="12000"></textarea>
+                </div>
+                <label class="form-hint">
+                  <input v-model="diagnosticsOptIn" type="checkbox" /> Include diagnostic consent flag (logs are not uploaded automatically)
+                </label>
+                <button class="btn btn-sm" :disabled="!feedbackMessage.trim()" @click="handleFeedback">Send feedback</button>
+              </template>
             </template>
 
             <!-- AI -->
@@ -163,14 +362,17 @@ async function saveSettings() {
               <div class="form-group">
                 <label class="form-label">KeyhanStudio API Key</label>
                 <input type="password" class="form-input mono" v-model="localConfig.ai.keyhanstudio.api_key" placeholder="sk-..." />
+                <button class="btn btn-ghost btn-sm" type="button" @click="clearCredential('keyhanstudio')">Remove stored key</button>
               </div>
               <div class="form-group">
                 <label class="form-label">OpenAI API Key</label>
                 <input type="password" class="form-input mono" v-model="localConfig.ai.openai.api_key" placeholder="sk-..." />
+                <button class="btn btn-ghost btn-sm" type="button" @click="clearCredential('openai')">Remove stored key</button>
               </div>
               <div class="form-group">
                 <label class="form-label">Anthropic API Key</label>
                 <input type="password" class="form-input mono" v-model="localConfig.ai.anthropic.api_key" placeholder="sk-..." />
+                <button class="btn btn-ghost btn-sm" type="button" @click="clearCredential('anthropic')">Remove stored key</button>
               </div>
             </template>
 
@@ -179,11 +381,11 @@ async function saveSettings() {
               <div class="section-header">
                 <span class="section-title">LM Studio Connection</span>
                 <span
-                  v-if="lmstudioConnectionStatus !== null"
+                  v-if="lm.online !== null"
                   class="status-badge"
-                  :class="lmstudioConnectionStatus ? 'status-ok' : 'status-err'"
+                  :class="lm.online ? 'status-ok' : 'status-err'"
                 >
-                  {{ lmstudioConnectionStatus ? 'Connected' : 'Offline' }}
+                  {{ lm.online ? 'Connected' : 'Offline' }}
                 </span>
               </div>
 
@@ -199,37 +401,120 @@ async function saveSettings() {
                   <button
                     class="btn btn-sm"
                     @click="testLmStudioConnection"
-                    :disabled="lmstudioTesting"
+                    :disabled="lm.loading"
                   >
-                    {{ lmstudioTesting ? 'Testing...' : 'Test' }}
+                    {{ lm.loading ? 'Testing...' : 'Test' }}
                   </button>
                 </div>
               </div>
 
-              <div class="form-group">
-                <label class="form-label">Model</label>
+              <!-- Model List with Load/Unload -->
+              <div class="form-group" v-if="lm.models.length > 0">
+                <label class="form-label">Available Models ({{ lm.models.length }})</label>
+                <div class="model-list">
+                  <div v-for="m in lm.models" :key="m.id" class="model-card">
+                    <div class="model-info">
+                      <span class="model-id">{{ modelLabel(m) }}</span>
+                      <div class="model-meta">
+                        <span v-if="m.architecture" class="model-tag">{{ m.architecture }}</span>
+                        <span v-if="m.loaded" class="model-tag tag-loaded">Loaded</span>
+                      </div>
+                    </div>
+                    <div class="model-actions">
+                      <button
+                        v-if="!m.loaded"
+                        class="btn btn-sm btn-load"
+                        :disabled="lm.loadingModel === m.id"
+                        @click="handleLoadModel(m.id)"
+                      >
+                        {{ lm.loadingModel === m.id ? 'Loading...' : 'Load' }}
+                      </button>
+                      <button
+                        v-if="m.loaded"
+                        class="btn btn-sm btn-unload"
+                        :disabled="lm.unloadingModel === m.id"
+                        @click="handleUnloadModel(m.id)"
+                      >
+                        {{ lm.unloadingModel === m.id ? 'Unloading...' : 'Unload' }}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Default model selection -->
+              <div class="form-group" v-if="lm.models.length > 0">
+                <label class="form-label">Default Model</label>
                 <div class="input-row">
                   <select v-model="localConfig.ai.lmstudio.model" class="form-input">
                     <option value="">-- Select Model --</option>
-                    <option v-for="m in lmstudioModels" :key="m.id" :value="m.id">
-                      {{ m.id }}
+                    <option v-for="m in lm.models" :key="m.id" :value="m.id">
+                      {{ modelLabel(m) }}
                     </option>
                   </select>
-                  <button class="btn btn-ghost btn-sm" @click="refreshLmStudioModels">
+                  <button class="btn btn-ghost btn-sm" @click="testLmStudioConnection">
                     Refresh
                   </button>
                 </div>
-                <p class="form-hint" v-if="lmstudioModels.length === 0 && lmstudioConnectionStatus === null">
-                  Click "Test" to connect and load models from LM Studio.
-                </p>
-                <p class="form-hint" v-if="lmstudioModels.length === 0 && lmstudioConnectionStatus === false">
-                  LM Studio is not running. Start it and load a model, then click "Test".
-                </p>
               </div>
 
-              <div class="info-box" v-if="lmstudioModels.length > 0">
-                <strong>{{ lmstudioModels.length }}</strong> model(s) available
+              <p class="form-hint" v-if="lm.models.length === 0 && lm.online === null">
+                Click "Test" to connect and load models from LM Studio.
+              </p>
+              <p class="form-hint" v-if="lm.models.length === 0 && lm.online === false">
+                LM Studio is not running. Start it and load a model, then click "Test".
+              </p>
+
+              <!-- Recommendations -->
+              <div class="section-header" style="margin-top: 16px;">
+                <span class="section-title">GPU Recommendations</span>
+                <button
+                  class="btn btn-sm"
+                  @click="loadRecommendations"
+                  :disabled="loadingRecommendations"
+                >
+                  {{ loadingRecommendations ? 'Checking...' : 'Check Fit' }}
+                </button>
               </div>
+
+              <div v-if="recommendations" class="rec-section">
+                <div class="info-box" v-if="recommendations.tier">
+                  GPU Tier: <strong>{{ recommendations.tier }}</strong>
+                  ({{ recommendations.vram_mb ? Math.round(recommendations.vram_mb / 1024) : '?' }} GB VRAM)
+                </div>
+
+                <div v-if="recommendations.recommended.length > 0" class="rec-list">
+                  <h4 class="rec-title">Matching models (recommended & available)</h4>
+                  <div v-for="rec in recommendations.recommended" :key="rec.model_id" class="rec-card">
+                    <div class="rec-name">{{ rec.display_name }}</div>
+                    <div class="rec-meta">
+                      <span>{{ rec.size_gb }} GB ({{ rec.quant }})</span>
+                      <span class="rec-notes">{{ rec.notes }}</span>
+                    </div>
+                    <code class="rec-id">{{ rec.model_id }}</code>
+                    <button
+                      class="btn btn-sm btn-load"
+                      style="margin-top: 4px;"
+                      @click="handleLoadModel(rec.model_id)"
+                    >
+                      Load This Model
+                    </button>
+                  </div>
+                </div>
+
+                <div v-if="recommendations.recommended.length === 0 && recommendations.available_models.length > 0" class="info-box warn">
+                  None of the VRAM-recommended models match your installed models.
+                  Consider downloading one from LM Studio.
+                </div>
+
+                <div v-if="recommendations.available_models.length === 0" class="info-box warn">
+                  No models found in LM Studio. Download models first.
+                </div>
+              </div>
+
+              <p class="form-hint" v-else>
+                Click "Check Fit" to cross-reference your GPU with available LM Studio models.
+              </p>
             </template>
 
             <!-- Hardware -->
@@ -383,6 +668,70 @@ async function saveSettings() {
   padding: 8px 12px;
 }
 
+.info-box.warn {
+  color: #f59e0b;
+  background: rgba(245, 158, 11, 0.1);
+}
+
+/* Model list */
+.model-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.model-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: var(--bg-input);
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+
+.model-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+
+.model-id {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-bright);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.model-meta { display: flex; gap: 6px; }
+
+.model-tag {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: rgba(148, 163, 184, 0.15);
+  color: var(--text-muted);
+}
+
+.model-tag.tag-loaded {
+  background: rgba(34, 197, 94, 0.15);
+  color: var(--success);
+  font-weight: 600;
+}
+
+.model-actions { flex-shrink: 0; }
+
+.btn-load {
+  background: var(--cyan-subtle);
+  color: var(--cyan);
+}
+
+.btn-unload {
+  background: rgba(239, 68, 68, 0.1);
+  color: var(--danger);
+}
+
+/* VRAM & Recommendations */
 .vram-results { display: flex; flex-direction: column; gap: 10px; }
 
 .gpu-card {
@@ -426,6 +775,7 @@ async function saveSettings() {
 }
 
 .rec-section { margin-top: 4px; }
+.rec-list { margin-top: 8px; }
 
 .rec-title {
   font-size: 12px;

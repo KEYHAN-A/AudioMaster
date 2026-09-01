@@ -7,6 +7,10 @@ use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
 
+/// Temporary safety ceiling until the decode and DSP graph are block-streamed.
+/// This bounds a single f32 sample buffer to 256 MiB.
+const MAX_DECODED_SAMPLES: usize = 64 * 1024 * 1024;
+
 /// Decoded audio data: interleaved f32 samples with metadata.
 #[derive(Debug, Clone)]
 pub struct DecodedAudio {
@@ -34,6 +38,20 @@ impl DecodedAudio {
 
 /// Decode an audio file into interleaved f32 samples using symphonia.
 pub fn decode_audio(path: &Path) -> Result<DecodedAudio> {
+    decode_audio_with_limit(path, MAX_DECODED_SAMPLES, false)
+}
+
+/// Decode a bounded prefix for secondary metrics when the full job is handled
+/// by the streaming path.
+pub fn decode_audio_prefix(path: &Path, max_samples: usize) -> Result<DecodedAudio> {
+    decode_audio_with_limit(path, max_samples, true)
+}
+
+fn decode_audio_with_limit(
+    path: &Path,
+    max_samples: usize,
+    truncate: bool,
+) -> Result<DecodedAudio> {
     let file = std::fs::File::open(path)
         .with_context(|| format!("Opening audio file: {}", path.display()))?;
 
@@ -64,13 +82,28 @@ pub fn decode_audio(path: &Path) -> Result<DecodedAudio> {
     let track_id = track.id;
     let codec_params = track.codec_params.clone();
 
-    let sample_rate = codec_params
-        .sample_rate
-        .context("Missing sample rate")?;
-    let channels = codec_params
-        .channels
-        .map(|c| c.count() as u16)
-        .unwrap_or(2);
+    let sample_rate = codec_params.sample_rate.context("Missing sample rate")?;
+    let channels = codec_params.channels.map(|c| c.count() as u16).unwrap_or(2);
+    anyhow::ensure!(
+        channels == 1 || channels == 2,
+        "Only mono and stereo sources are supported (found {channels} channels)"
+    );
+    anyhow::ensure!(
+        (8_000..=384_000).contains(&sample_rate),
+        "Unsupported sample rate: {sample_rate} Hz"
+    );
+    if !truncate {
+        if let Some(frames) = codec_params.n_frames {
+            let estimated_samples = usize::try_from(frames)
+                .ok()
+                .and_then(|value| value.checked_mul(channels as usize))
+                .context("Decoded audio is too large for this build")?;
+            anyhow::ensure!(
+                estimated_samples <= max_samples,
+                "Decoded audio exceeds the current 256 MiB processing limit"
+            );
+        }
+    }
 
     let dec_opts = DecoderOptions::default();
     let mut decoder = symphonia::default::get_codecs()
@@ -107,8 +140,23 @@ pub fn decode_audio(path: &Path) -> Result<DecodedAudio> {
 
         let mut sample_buf = SampleBuffer::<f32>::new(num_frames as u64, spec);
         sample_buf.copy_interleaved_ref(decoded);
+        let remaining = max_samples.saturating_sub(all_samples.len());
+        if sample_buf.samples().len() > remaining {
+            if truncate {
+                let aligned = remaining - remaining % channels as usize;
+                all_samples.extend_from_slice(&sample_buf.samples()[..aligned]);
+                total_frames = (all_samples.len() / channels as usize) as u64;
+                break;
+            }
+            anyhow::bail!("Decoded audio exceeds the current 256 MiB processing limit");
+        }
         all_samples.extend_from_slice(sample_buf.samples());
     }
+
+    anyhow::ensure!(
+        !all_samples.is_empty(),
+        "Audio stream contains no decoded samples"
+    );
 
     Ok(DecodedAudio {
         samples: all_samples,

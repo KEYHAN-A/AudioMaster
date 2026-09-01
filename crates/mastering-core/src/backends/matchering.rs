@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use std::process::Command;
+use tokio::process::Command;
 use tracing::{debug, info};
 
 use super::{BackendOutput, MasteringOptions};
@@ -20,6 +20,10 @@ impl MatcheringBackend {
     }
 
     pub async fn process(&self, opts: &MasteringOptions) -> Result<BackendOutput> {
+        anyhow::ensure!(
+            !opts.no_limiter,
+            "The Matchering compatibility backend cannot guarantee limiter-free processing"
+        );
         let reference = opts
             .reference_path
             .as_ref()
@@ -50,6 +54,7 @@ impl MatcheringBackend {
             .arg(&script)
             .arg(request.to_string())
             .output()
+            .await
             .with_context(|| {
                 format!(
                     "Failed to run matchering bridge script. Is Python installed at '{}'?",
@@ -57,7 +62,10 @@ impl MatcheringBackend {
                 )
             })?;
 
-        debug!("Matchering stdout: {}", String::from_utf8_lossy(&output.stdout));
+        debug!(
+            "Matchering stdout: {}",
+            String::from_utf8_lossy(&output.stdout)
+        );
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -83,6 +91,7 @@ impl MatcheringBackend {
             params_applied: None,
             backend_name: "matchering".into(),
             message,
+            warnings: Vec::new(),
         })
     }
 
@@ -92,21 +101,14 @@ impl MatcheringBackend {
             return Ok(false);
         }
 
-        let python = self.python_path.clone();
         let result = tokio::time::timeout(
             std::time::Duration::from_secs(10),
-            tokio::task::spawn_blocking(move || {
-                Command::new(&python)
-                    .arg("-c")
-                    .arg("import matchering; print('ok')")
-                    .output()
-            }),
+            Command::new(&self.python_path)
+                .arg("-c")
+                .arg("import matchering; print('ok')")
+                .output(),
         )
         .await;
-
-        match result {
-            Ok(Ok(Ok(o))) => Ok(o.status.success()),
-            _ => Ok(false),
-        }
+        Ok(matches!(result, Ok(Ok(output)) if output.status.success()))
     }
 }

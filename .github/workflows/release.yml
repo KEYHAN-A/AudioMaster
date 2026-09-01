@@ -20,6 +20,27 @@ permissions:
   contents: write
 
 jobs:
+  quality-gate:
+    name: Production Quality Gate
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: cargo fmt --all -- --check
+      - run: cargo test --workspace
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: npm run build
+      - name: Verify tag matches package version
+        shell: bash
+        run: test "${GITHUB_REF_NAME#v}" = "$(node -p "require('./package.json').version")"
+
   # -----------------------------------------------------------------------
   #  Tauri desktop app (macOS, Windows, Linux)
   # -----------------------------------------------------------------------
@@ -32,10 +53,15 @@ jobs:
         include:
           - platform: macos-latest
             args: --target universal-apple-darwin
+            experimental: false
           - platform: ubuntu-22.04
             args: ""
+            experimental: true
           - platform: windows-latest
             args: ""
+            experimental: false
+    continue-on-error: ${{ matrix.experimental }}
+    needs: quality-gate
 
     steps:
       - uses: actions/checkout@v4
@@ -96,15 +122,21 @@ jobs:
           - os: macos-latest
             target: aarch64-apple-darwin
             artifact: mastering-cli-macos-arm64
+            experimental: false
           - os: macos-latest
             target: x86_64-apple-darwin
             artifact: mastering-cli-macos-x64
+            experimental: false
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             artifact: mastering-cli-linux-x64
+            experimental: true
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             artifact: mastering-cli-windows-x64
+            experimental: false
+    continue-on-error: ${{ matrix.experimental }}
+    needs: quality-gate
 
     steps:
       - uses: actions/checkout@v4
@@ -125,3 +157,33 @@ jobs:
             target/${{ matrix.target }}/release/mastering
             target/${{ matrix.target }}/release/mastering.exe
           if-no-files-found: ignore
+
+  supply-chain:
+    name: SBOM and checksums
+    runs-on: ubuntu-latest
+    needs: quality-gate
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - uses: anchore/sbom-action@v0
+        with:
+          path: .
+          format: cyclonedx-json
+          output-file: audiomaster-sbom.cdx.json
+      - name: Generate dependency notices
+        run: |
+          node scripts/generate-notices.mjs THIRD_PARTY_NOTICES.md
+          cargo metadata --format-version 1 > rust-dependencies.json
+          npm ls --all --json > npm-dependencies.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: supply-chain-evidence
+          path: |
+            audiomaster-sbom.cdx.json
+            rust-dependencies.json
+            npm-dependencies.json
+            THIRD_PARTY_NOTICES.md

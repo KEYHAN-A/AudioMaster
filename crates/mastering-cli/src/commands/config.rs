@@ -83,11 +83,7 @@ pub fn run(args: ConfigArgs) -> Result<()> {
         if config.ai.anthropic.api_key.is_empty() {
             "not configured".dimmed().to_string()
         } else {
-            format!(
-                "{} ({})",
-                "configured".green(),
-                config.ai.anthropic.model
-            )
+            format!("{} ({})", "configured".green(), config.ai.anthropic.model)
         }
     );
 

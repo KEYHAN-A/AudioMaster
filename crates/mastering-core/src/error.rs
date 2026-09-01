@@ -67,10 +67,7 @@ pub enum MasteringError {
 
     /// Processing errors
     #[error("Audio processing failed: {message}")]
-    ProcessingError {
-        message: String,
-        stage: String,
-    },
+    ProcessingError { message: String, stage: String },
 
     /// Validation errors
     #[error("Validation failed: {message}")]
@@ -163,11 +160,10 @@ impl MasteringError {
         let file = file.into();
         let reason = reason.into();
         let suggested_action = if reason.contains("format") || reason.contains("codec") {
-            format!(
-                "Ensure the file is a supported format (WAV, FLAC, MP3, OGG, M4A)."
-            )
+            "Ensure the file is a supported format (WAV, FLAC, MP3, OGG, M4A).".to_string()
         } else if reason.contains("corrupt") || reason.contains("invalid") {
-            "The file may be corrupted. Try opening it in another audio application to verify.".to_string()
+            "The file may be corrupted. Try opening it in another audio application to verify."
+                .to_string()
         } else {
             "Try re-exporting the file from your audio software.".to_string()
         };

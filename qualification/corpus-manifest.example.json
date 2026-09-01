@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "corpus": "AudioMaster release corpus",
+  "tracks": [
+    {
+      "id": "replace-with-stable-id",
+      "file": "external-corpus/track.wav",
+      "sha256": "replace-with-sha256",
+      "tags": ["mono", "high-crest", "48khz"],
+      "license_provenance": "internal or licensed test material",
+      "expected_failure": null
+    }
+  ]
+}

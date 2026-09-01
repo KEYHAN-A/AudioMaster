@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use std::process::Command;
+use tokio::process::Command;
 use tracing::{debug, info};
 
 use super::{BackendOutput, MasteringOptions};
@@ -42,12 +42,14 @@ impl LocalMlBackend {
             "reference": opts.reference_path.as_ref().map(|p| p.to_string_lossy().to_string()),
             "bit_depth": opts.bit_depth,
             "target_lufs": opts.target_lufs,
+            "no_limiter": opts.no_limiter,
         });
 
         let output = Command::new(&self.python_path)
             .arg(&script)
             .arg(request.to_string())
             .output()
+            .await
             .with_context(|| {
                 format!(
                     "Failed to run ML inference script. Is Python installed at '{}'?",
@@ -84,6 +86,7 @@ impl LocalMlBackend {
             params_applied: None,
             backend_name: format!("local-ml/{}", self.default_model),
             message,
+            warnings: Vec::new(),
         })
     }
 
@@ -93,21 +96,14 @@ impl LocalMlBackend {
             return Ok(false);
         }
 
-        let python = self.python_path.clone();
         let result = tokio::time::timeout(
             std::time::Duration::from_secs(10),
-            tokio::task::spawn_blocking(move || {
-                Command::new(&python)
-                    .arg("-c")
-                    .arg("import soundfile; print('ok')")
-                    .output()
-            }),
+            Command::new(&self.python_path)
+                .arg("-c")
+                .arg("import soundfile; print('ok')")
+                .output(),
         )
         .await;
-
-        match result {
-            Ok(Ok(Ok(o))) => Ok(o.status.success()),
-            _ => Ok(false),
-        }
+        Ok(matches!(result, Ok(Ok(output)) if output.status.success()))
     }
 }

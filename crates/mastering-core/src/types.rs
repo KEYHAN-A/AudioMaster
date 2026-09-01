@@ -26,12 +26,19 @@ pub struct AudioMetadata {
 /// Complete audio analysis results.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AudioAnalysis {
+    /// Serialized report schema. Increment when measurement semantics change.
+    #[serde(default = "analysis_schema_version")]
+    pub schema_version: u16,
     /// File metadata.
     pub metadata: AudioMetadata,
     /// Integrated loudness in LUFS (EBU R128).
     pub lufs_integrated: f64,
     /// Maximum short-term loudness (3-second window) in LUFS.
     pub lufs_short_term_max: f64,
+    /// Maximum momentary loudness (400 ms window) in LUFS.
+    pub lufs_momentary_max: f64,
+    /// EBU-style loudness range in loudness units.
+    pub loudness_range_lu: f64,
     /// RMS level in dB.
     pub rms_db: f64,
     /// Sample peak level in dB.
@@ -40,10 +47,24 @@ pub struct AudioAnalysis {
     pub true_peak_db: f64,
     /// Dynamic range in dB (difference between loud and quiet sections).
     pub dynamic_range_db: f64,
+    /// Difference between sample peak and RMS level.
+    pub crest_factor_db: f64,
+    /// Difference between true peak and integrated loudness.
+    pub peak_to_loudness_ratio: f64,
     /// Stereo width (0.0 = mono, 1.0 = full stereo).
     pub stereo_width: f64,
+    /// Pearson correlation of the left and right channels (-1.0 to 1.0).
+    pub stereo_correlation: f64,
+    /// Maximum absolute per-channel DC offset.
+    pub dc_offset: f64,
+    /// Number of samples at or above full scale.
+    pub clipped_samples: u64,
     /// 7-band frequency analysis.
     pub frequency_bands: FrequencyBands,
+}
+
+fn analysis_schema_version() -> u16 {
+    2
 }
 
 /// 7-band frequency analysis results (all in dB).
@@ -73,6 +94,38 @@ pub struct MasteringParams {
     pub limiter: LimiterParams,
     pub stereo: StereoParams,
     pub target_lufs: f64,
+}
+
+/// Versioned contract exchanged with automated mastering advisors.
+///
+/// Keeping the envelope separate from DSP parameters lets clients reject
+/// incompatible plans without silently interpreting changed semantics.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MasteringPlan {
+    pub schema_version: u16,
+    pub params: MasteringParams,
+}
+
+impl MasteringPlan {
+    pub const CURRENT_SCHEMA_VERSION: u16 = 1;
+
+    pub fn current(params: MasteringParams) -> Self {
+        Self {
+            schema_version: Self::CURRENT_SCHEMA_VERSION,
+            params,
+        }
+    }
+
+    pub fn validate_version(self) -> anyhow::Result<MasteringParams> {
+        anyhow::ensure!(
+            self.schema_version == Self::CURRENT_SCHEMA_VERSION,
+            "Unsupported mastering plan schema version {} (expected {})",
+            self.schema_version,
+            Self::CURRENT_SCHEMA_VERSION
+        );
+        Ok(self.params)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -123,12 +176,24 @@ pub struct MasteringResult {
     pub pre_analysis: Option<AudioAnalysis>,
     pub post_analysis: Option<AudioAnalysis>,
     pub params_applied: Option<MasteringParams>,
+    /// Non-fatal engine adjustments or delivery-quality findings.
+    #[serde(default)]
+    pub warnings: Vec<MasteringWarning>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MasteringWarning {
+    /// Stable machine-readable identifier for clients and telemetry.
+    pub code: String,
+    /// Human-readable explanation suitable for the desktop UI and CLI.
+    pub message: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Backend {
     Auto,
+    Native,
     Matchering,
     Ai,
     LocalMl,
@@ -138,6 +203,7 @@ impl std::fmt::Display for Backend {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Backend::Auto => write!(f, "auto"),
+            Backend::Native => write!(f, "native"),
             Backend::Matchering => write!(f, "matchering"),
             Backend::Ai => write!(f, "ai"),
             Backend::LocalMl => write!(f, "local-ml"),
@@ -150,6 +216,7 @@ impl std::str::FromStr for Backend {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
             "auto" => Ok(Backend::Auto),
+            "native" | "local" => Ok(Backend::Native),
             "matchering" => Ok(Backend::Matchering),
             "ai" => Ok(Backend::Ai),
             "local-ml" | "local_ml" | "localml" => Ok(Backend::LocalMl),
@@ -198,16 +265,20 @@ impl std::str::FromStr for AiProvider {
 #[serde(rename_all = "snake_case")]
 pub enum AudioFormat {
     Wav,
+    Aiff,
     Flac,
     Mp3,
+    Aac,
 }
 
 impl std::fmt::Display for AudioFormat {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             AudioFormat::Wav => write!(f, "wav"),
+            AudioFormat::Aiff => write!(f, "aiff"),
             AudioFormat::Flac => write!(f, "flac"),
             AudioFormat::Mp3 => write!(f, "mp3"),
+            AudioFormat::Aac => write!(f, "aac"),
         }
     }
 }
@@ -217,8 +288,10 @@ impl std::str::FromStr for AudioFormat {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
             "wav" => Ok(AudioFormat::Wav),
+            "aif" | "aiff" => Ok(AudioFormat::Aiff),
             "flac" => Ok(AudioFormat::Flac),
             "mp3" => Ok(AudioFormat::Mp3),
+            "aac" | "m4a" => Ok(AudioFormat::Aac),
             _ => anyhow::bail!("Unknown audio format: {s}"),
         }
     }

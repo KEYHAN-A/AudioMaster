@@ -4,26 +4,28 @@ defineProps({
   message: String,
   progress: { type: Number, default: 0 },
 });
+defineEmits(["cancel"]);
 </script>
 
 <template>
   <Transition name="fade">
     <div v-if="visible" class="dialog-overlay">
-      <div class="processing-card glass-card">
+      <div class="processing-card glass-card" role="dialog" aria-modal="true" aria-labelledby="processing-title" aria-describedby="processing-message">
         <div class="processing-anim">
           <div class="ring-outer">
             <div class="ring-inner spin"></div>
           </div>
         </div>
-        <h3 class="processing-title gradient-text">Processing</h3>
-        <p class="processing-message">{{ message || "Working..." }}</p>
-        <div class="progress-bar" style="width: 220px;">
+        <h3 id="processing-title" class="processing-title gradient-text">Processing</h3>
+        <p id="processing-message" class="processing-message" aria-live="polite">{{ message || "Working..." }}</p>
+        <div class="progress-bar" style="width: 220px;" role="progressbar" aria-label="Mastering progress" aria-valuemin="0" aria-valuemax="100" :aria-valuenow="Math.round(progress)">
           <div
             class="progress-bar-fill"
             :style="{ width: progress > 0 ? progress + '%' : '100%' }"
           ></div>
         </div>
         <span v-if="progress > 0" class="progress-pct">{{ Math.round(progress) }}%</span>
+        <button class="btn btn-ghost btn-sm" type="button" @click="$emit('cancel')">Cancel safely</button>
       </div>
     </div>
   </Transition>

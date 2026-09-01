@@ -28,6 +28,7 @@ def main():
     reference = request.get("reference")
     bit_depth = request.get("bit_depth", 24)
     target_lufs = request.get("target_lufs", -14.0)
+    no_limiter = request.get("no_limiter", False)
 
     if not input_path or not output_path:
         print(json.dumps({"error": "Missing required fields: input, output"}))
@@ -39,9 +40,9 @@ def main():
 
     try:
         if model_name == "deepafx-st":
-            process_deepafx(input_path, output_path, reference, bit_depth, target_lufs)
+            process_deepafx(input_path, output_path, reference, bit_depth, target_lufs, no_limiter)
         else:
-            process_huggingface(input_path, output_path, model_name, bit_depth, target_lufs)
+            process_huggingface(input_path, output_path, model_name, bit_depth, target_lufs, no_limiter)
 
         print(json.dumps({
             "output": output_path,
@@ -59,7 +60,7 @@ def main():
         sys.exit(1)
 
 
-def process_deepafx(input_path, output_path, reference, bit_depth, target_lufs):
+def process_deepafx(input_path, output_path, reference, bit_depth, target_lufs, no_limiter=False):
     """
     Process audio using DeepAFx-ST style transfer.
     If the model isn't available locally, falls back to a simple
@@ -96,15 +97,16 @@ def process_deepafx(input_path, output_path, reference, bit_depth, target_lufs):
         processed *= 10 ** (gain_db / 20.0)
 
     # Simple peak limiter
-    peak = np.max(np.abs(processed))
-    ceiling = 10 ** (-1.0 / 20.0)
-    if peak > ceiling:
-        processed *= ceiling / peak
+    if not no_limiter:
+        peak = np.max(np.abs(processed))
+        ceiling = 10 ** (-1.0 / 20.0)
+        if peak > ceiling:
+            processed *= ceiling / peak
 
     sf.write(output_path, processed, sr, subtype=_subtype(bit_depth))
 
 
-def process_huggingface(input_path, output_path, model_name, bit_depth, target_lufs):
+def process_huggingface(input_path, output_path, model_name, bit_depth, target_lufs, no_limiter=False):
     """
     Process audio using a HuggingFace model.
     This is a placeholder for future model integration.
@@ -128,10 +130,11 @@ def process_huggingface(input_path, output_path, model_name, bit_depth, target_l
         gain_db = np.clip(target_lufs - current_lufs, -12.0, 12.0)
         processed *= 10 ** (gain_db / 20.0)
 
-    peak = np.max(np.abs(processed))
-    ceiling = 10 ** (-1.0 / 20.0)
-    if peak > ceiling:
-        processed *= ceiling / peak
+    if not no_limiter:
+        peak = np.max(np.abs(processed))
+        ceiling = 10 ** (-1.0 / 20.0)
+        if peak > ceiling:
+            processed *= ceiling / peak
 
     sf.write(output_path, processed, sr, subtype=_subtype(bit_depth))
 

@@ -68,7 +68,11 @@ fn test_config_roundtrip() {
 #[test]
 fn test_backend_parsing() {
     assert_eq!("auto".parse::<Backend>().unwrap(), Backend::Auto);
-    assert_eq!("matchering".parse::<Backend>().unwrap(), Backend::Matchering);
+    assert_eq!("native".parse::<Backend>().unwrap(), Backend::Native);
+    assert_eq!(
+        "matchering".parse::<Backend>().unwrap(),
+        Backend::Matchering
+    );
     assert_eq!("ai".parse::<Backend>().unwrap(), Backend::Ai);
     assert_eq!("local-ml".parse::<Backend>().unwrap(), Backend::LocalMl);
     assert!("invalid".parse::<Backend>().is_err());
@@ -175,7 +179,7 @@ fn test_mastering_job_auto_backend() {
         preset: None,
         dry_run: false,
     };
-    assert_eq!(job_no_ref.resolved_backend(), Backend::Ai);
+    assert_eq!(job_no_ref.resolved_backend(), Backend::Native);
 
     let job_with_ref = MasteringJob {
         input_path: PathBuf::from("song.wav"),
@@ -202,6 +206,10 @@ fn test_audio_format_parsing() {
     assert_eq!(AudioFormat::from_str("WAV").unwrap(), AudioFormat::Wav);
     assert_eq!(AudioFormat::from_str("flac").unwrap(), AudioFormat::Flac);
     assert_eq!(AudioFormat::from_str("mp3").unwrap(), AudioFormat::Mp3);
+    assert_eq!(AudioFormat::from_str("aif").unwrap(), AudioFormat::Aiff);
+    assert_eq!(AudioFormat::from_str("AIFF").unwrap(), AudioFormat::Aiff);
+    assert_eq!(AudioFormat::from_str("aac").unwrap(), AudioFormat::Aac);
+    assert_eq!(AudioFormat::from_str("m4a").unwrap(), AudioFormat::Aac);
     assert!(AudioFormat::from_str("invalid").is_err());
 }
 
@@ -250,9 +258,278 @@ fn test_mastering_job_with_preset() {
 #[test]
 fn test_backend_display() {
     assert_eq!(Backend::Auto.to_string(), "auto");
+    assert_eq!(Backend::Native.to_string(), "native");
     assert_eq!(Backend::Matchering.to_string(), "matchering");
     assert_eq!(Backend::Ai.to_string(), "ai");
     assert_eq!(Backend::LocalMl.to_string(), "local-ml");
+}
+
+#[tokio::test]
+async fn test_native_pipeline_renders_and_verifies_wav() {
+    use mastering_core::pipeline::{self, MasteringJob};
+
+    let input = create_test_wav();
+    let output_dir = tempfile::tempdir().unwrap();
+    let output = output_dir.path().join("mastered.wav");
+    let job = MasteringJob {
+        input_path: input.path().to_path_buf(),
+        output_path: Some(output.clone()),
+        reference_path: None,
+        backend: Backend::Native,
+        ai_provider: None,
+        lmstudio_model: None,
+        bit_depth: Some(24),
+        format: Some(AudioFormat::Wav),
+        target_lufs: Some(-14.0),
+        no_limiter: false,
+        preset: None,
+        dry_run: false,
+    };
+
+    let result = pipeline::run(&job, &Config::default()).await.unwrap();
+    let post = result
+        .post_analysis
+        .expect("delivered file should be verified");
+    assert!(output.exists());
+    assert_eq!(result.backend_used, "native");
+    assert!(post.true_peak_db <= -0.9);
+    assert!((post.lufs_integrated - (-14.0)).abs() <= 1.0);
+}
+
+#[tokio::test]
+async fn test_native_pipeline_converts_and_verifies_mp3() {
+    use mastering_core::pipeline::{self, MasteringJob};
+
+    if std::process::Command::new("ffmpeg")
+        .arg("-version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_err()
+    {
+        eprintln!("skipping MP3 conversion test because ffmpeg is unavailable");
+        return;
+    }
+
+    let input = create_test_wav();
+    let output_dir = tempfile::tempdir().unwrap();
+    let output = output_dir.path().join("mastered.mp3");
+    let job = MasteringJob {
+        input_path: input.path().to_path_buf(),
+        output_path: Some(output.clone()),
+        reference_path: None,
+        backend: Backend::Native,
+        ai_provider: None,
+        lmstudio_model: None,
+        bit_depth: Some(24),
+        format: Some(AudioFormat::Mp3),
+        target_lufs: Some(-14.0),
+        no_limiter: false,
+        preset: None,
+        dry_run: false,
+    };
+
+    let result = pipeline::run(&job, &Config::default()).await.unwrap();
+    let post = result
+        .post_analysis
+        .expect("encoded delivery should be verified");
+    assert!(output.exists());
+    assert_eq!(post.metadata.format, "MP3");
+    assert_eq!(post.metadata.path, output);
+    assert!(post.true_peak_db <= -0.85);
+}
+
+#[tokio::test]
+async fn test_album_pipeline_publishes_complete_verified_set() {
+    use mastering_core::album::{self, AlbumJob};
+
+    let first = create_test_wav();
+    let second = create_test_wav();
+    let output_dir = tempfile::tempdir().unwrap();
+    let job = AlbumJob {
+        input_paths: vec![first.path().to_path_buf(), second.path().to_path_buf()],
+        output_directory: output_dir.path().to_path_buf(),
+        reference_path: None,
+        backend: Backend::Native,
+        ai_provider: None,
+        bit_depth: Some(24),
+        format: Some(AudioFormat::Wav),
+        target_lufs: Some(-14.0),
+        no_limiter: false,
+        preset: None,
+        max_relative_offset_lu: 1.5,
+        track_offsets_lu: vec![0.0, 0.0],
+    };
+
+    let result = album::run(&job, &Config::default()).await.unwrap();
+    assert_eq!(result.tracks.len(), 2);
+    assert!(result
+        .tracks
+        .iter()
+        .all(|track| track.result.output_path.exists()));
+    assert!(result.report_path.exists());
+    assert!(result.tracks.iter().all(|track| track.sha256.len() == 64));
+    assert!(result
+        .tracks
+        .iter()
+        .all(
+            |track| track.result.post_analysis.as_ref().is_some_and(|analysis| {
+                analysis.metadata.path == track.result.output_path && analysis.true_peak_db <= -0.85
+            })
+        ));
+    assert!(std::fs::read_dir(output_dir.path())
+        .unwrap()
+        .all(|entry| !entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".audiomaster-album")));
+}
+
+#[tokio::test]
+async fn test_aiff_and_aac_delivery_paths() {
+    use mastering_core::pipeline::{self, MasteringJob};
+
+    if std::process::Command::new("ffmpeg")
+        .arg("-version")
+        .output()
+        .is_err()
+    {
+        eprintln!("skipping delivery codec test because ffmpeg is unavailable");
+        return;
+    }
+    for (format, extension) in [(AudioFormat::Aiff, "aiff"), (AudioFormat::Aac, "m4a")] {
+        let input = create_test_wav();
+        let output_dir = tempfile::tempdir().unwrap();
+        let output = output_dir.path().join(format!("mastered.{extension}"));
+        let job = MasteringJob {
+            input_path: input.path().to_path_buf(),
+            output_path: Some(output.clone()),
+            reference_path: None,
+            backend: Backend::Native,
+            ai_provider: None,
+            lmstudio_model: None,
+            bit_depth: Some(24),
+            format: Some(format),
+            target_lufs: Some(-14.0),
+            no_limiter: false,
+            preset: None,
+            dry_run: false,
+        };
+        let result = pipeline::run(&job, &Config::default()).await.unwrap();
+        assert!(output.exists());
+        assert!(result.post_analysis.is_some());
+    }
+}
+
+#[tokio::test]
+async fn test_pipeline_rejects_format_extension_mismatch_before_render() {
+    use mastering_core::pipeline::{self, MasteringJob};
+
+    let input = create_test_wav();
+    let output_dir = tempfile::tempdir().unwrap();
+    let output = output_dir.path().join("wrong-extension.flac");
+    let job = MasteringJob {
+        input_path: input.path().to_path_buf(),
+        output_path: Some(output.clone()),
+        reference_path: None,
+        backend: Backend::Native,
+        ai_provider: None,
+        lmstudio_model: None,
+        bit_depth: Some(24),
+        format: Some(AudioFormat::Mp3),
+        target_lufs: Some(-14.0),
+        no_limiter: false,
+        preset: None,
+        dry_run: false,
+    };
+
+    let error = pipeline::run(&job, &Config::default()).await.unwrap_err();
+    assert!(error.to_string().contains("extension"));
+    assert!(!output.exists());
+}
+
+#[tokio::test]
+async fn pipeline_requires_overwrite_authorization_and_preserves_existing_file() {
+    use mastering_core::pipeline::{self, MasteringJob};
+
+    let input = create_test_wav();
+    let output_dir = tempfile::tempdir().unwrap();
+    let output = output_dir.path().join("existing.wav");
+    std::fs::write(&output, b"existing delivery").unwrap();
+    let job = MasteringJob {
+        input_path: input.path().to_path_buf(),
+        output_path: Some(output.clone()),
+        reference_path: None,
+        backend: Backend::Native,
+        ai_provider: None,
+        lmstudio_model: None,
+        bit_depth: Some(24),
+        format: Some(AudioFormat::Wav),
+        target_lufs: Some(-14.0),
+        no_limiter: false,
+        preset: None,
+        dry_run: false,
+    };
+    let error = pipeline::run(&job, &Config::default()).await.unwrap_err();
+    assert!(error.to_string().contains("overwrite confirmation"));
+    assert_eq!(std::fs::read(&output).unwrap(), b"existing delivery");
+}
+
+#[tokio::test]
+async fn cancelled_job_never_publishes_output() {
+    use mastering_core::control::ProcessingControl;
+    use mastering_core::pipeline::{self, MasteringJob};
+
+    let input = create_test_wav();
+    let output_dir = tempfile::tempdir().unwrap();
+    let output = output_dir.path().join("cancelled.wav");
+    let job = MasteringJob {
+        input_path: input.path().to_path_buf(),
+        output_path: Some(output.clone()),
+        reference_path: None,
+        backend: Backend::Native,
+        ai_provider: None,
+        lmstudio_model: None,
+        bit_depth: Some(24),
+        format: Some(AudioFormat::Wav),
+        target_lufs: Some(-14.0),
+        no_limiter: false,
+        preset: None,
+        dry_run: false,
+    };
+    let control = ProcessingControl::default();
+    control.cancel();
+    let error = pipeline::run_with_control(&job, &Config::default(), control)
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("cancelled"));
+    assert!(!output.exists());
+}
+
+#[tokio::test]
+async fn unicode_output_path_is_supported() {
+    use mastering_core::pipeline::{self, MasteringJob};
+
+    let input = create_test_wav();
+    let output_dir = tempfile::tempdir().unwrap();
+    let output = output_dir.path().join("Müzik_日本語_🎵.wav");
+    let job = MasteringJob {
+        input_path: input.path().to_path_buf(),
+        output_path: Some(output.clone()),
+        reference_path: None,
+        backend: Backend::Native,
+        ai_provider: None,
+        lmstudio_model: None,
+        bit_depth: Some(24),
+        format: Some(AudioFormat::Wav),
+        target_lufs: Some(-14.0),
+        no_limiter: false,
+        preset: None,
+        dry_run: false,
+    };
+    pipeline::run(&job, &Config::default()).await.unwrap();
+    assert!(output.exists());
 }
 
 #[test]
@@ -322,4 +599,3 @@ async fn test_analysis_with_short_audio() {
     let analysis = result.unwrap();
     assert!(analysis.metadata.duration_secs < 1.0);
 }
-

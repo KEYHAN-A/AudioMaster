@@ -23,22 +23,60 @@ pub fn analyze(path: &Path, audio: &DecodedAudio) -> Result<AudioAnalysis> {
 
     let rms_db = compute_rms_db(&audio.samples);
     let peak_db = compute_peak_db(&audio.samples);
-    let true_peak_db = peak_db + 0.2; // simplified true-peak estimation
-    let lufs_integrated = compute_lufs(audio);
-    let lufs_short_term_max = compute_short_term_lufs_max(audio);
+    let true_peak_db = compute_true_peak_db(audio);
+    let weighted = k_weight(audio);
+    let lufs_integrated =
+        compute_lufs_weighted(&weighted, audio.sample_rate, audio.channels as usize);
+    let lufs_short_term_max = compute_windowed_loudness_max(
+        &weighted,
+        audio.sample_rate,
+        audio.channels as usize,
+        3.0,
+        1.0,
+    );
+    let lufs_momentary_max = compute_windowed_loudness_max(
+        &weighted,
+        audio.sample_rate,
+        audio.channels as usize,
+        0.4,
+        0.1,
+    );
+    let loudness_range_lu = compute_loudness_range(
+        &weighted,
+        audio.sample_rate,
+        audio.channels as usize,
+        lufs_integrated,
+    );
     let dynamic_range_db = compute_dynamic_range(audio);
+    let crest_factor_db = (peak_db - rms_db).max(0.0);
+    let peak_to_loudness_ratio = (true_peak_db - lufs_integrated).max(0.0);
     let stereo_width = compute_stereo_width(audio);
+    let stereo_correlation = compute_stereo_correlation(audio);
+    let dc_offset = compute_dc_offset(audio);
+    let clipped_samples = audio
+        .samples
+        .iter()
+        .filter(|sample| sample.is_finite() && sample.abs() >= 1.0)
+        .count() as u64;
     let frequency_bands = compute_frequency_bands(audio);
 
     Ok(AudioAnalysis {
+        schema_version: 2,
         metadata,
         lufs_integrated,
         lufs_short_term_max,
+        lufs_momentary_max,
+        loudness_range_lu,
         rms_db,
         peak_db,
         true_peak_db,
         dynamic_range_db,
+        crest_factor_db,
+        peak_to_loudness_ratio,
         stereo_width,
+        stereo_correlation,
+        dc_offset,
+        clipped_samples,
         frequency_bands,
     })
 }
@@ -58,12 +96,8 @@ fn compute_rms_db(samples: &[f32]) -> f64 {
 }
 
 /// Peak level in dB.
-
 fn compute_peak_db(samples: &[f32]) -> f64 {
-    let peak = samples
-        .iter()
-        .map(|s| s.abs())
-        .fold(0.0f32, f32::max) as f64;
+    let peak = samples.iter().map(|s| s.abs()).fold(0.0f32, f32::max) as f64;
     if peak < 1e-10 {
         -100.0
     } else {
@@ -71,50 +105,227 @@ fn compute_peak_db(samples: &[f32]) -> f64 {
     }
 }
 
-/// Simplified ITU-R BS.1770 loudness measurement.
-/// Full implementation requires K-weighting filter; this is a practical approximation.
+/// Four-times oversampled peak estimate using a windowed-sinc interpolator.
+///
+/// This is intentionally independent from the render limiter so metering can
+/// detect inter-sample overs even when the source samples remain below 0 dBFS.
+fn compute_true_peak_db(audio: &DecodedAudio) -> f64 {
+    let channels = audio.channels as usize;
+    if channels == 0 || audio.samples.is_empty() {
+        return -100.0;
+    }
 
+    let frames = audio.samples.len() / channels;
+    let mut peak = audio
+        .samples
+        .iter()
+        .filter(|sample| sample.is_finite())
+        .map(|sample| sample.abs() as f64)
+        .fold(0.0, f64::max);
+    let half_taps = 4isize;
+
+    for channel in 0..channels {
+        for frame in 0..frames.saturating_sub(1) {
+            for phase in 1..4 {
+                let position = frame as f64 + phase as f64 / 4.0;
+                let mut value = 0.0;
+                let mut weight_sum = 0.0;
+
+                for tap in -half_taps..=half_taps {
+                    let sample_index = frame as isize + tap;
+                    if sample_index < 0 || sample_index >= frames as isize {
+                        continue;
+                    }
+
+                    let distance = position - sample_index as f64;
+                    let normalized = distance / (half_taps as f64 + 1.0);
+                    let window = if normalized.abs() <= 1.0 {
+                        0.5 + 0.5 * (std::f64::consts::PI * normalized).cos()
+                    } else {
+                        0.0
+                    };
+                    let sinc = if distance.abs() < 1e-12 {
+                        1.0
+                    } else {
+                        let angle = std::f64::consts::PI * distance;
+                        angle.sin() / angle
+                    };
+                    let weight = sinc * window;
+                    value +=
+                        audio.samples[sample_index as usize * channels + channel] as f64 * weight;
+                    weight_sum += weight;
+                }
+
+                if weight_sum.abs() > 1e-12 {
+                    peak = peak.max((value / weight_sum).abs());
+                }
+            }
+        }
+    }
+
+    if peak < 1e-10 {
+        -100.0
+    } else {
+        20.0 * peak.log10()
+    }
+}
+
+#[derive(Clone, Copy)]
+struct BiquadCoefficients {
+    b0: f64,
+    b1: f64,
+    b2: f64,
+    a1: f64,
+    a2: f64,
+}
+
+#[derive(Clone, Copy, Default)]
+struct BiquadState {
+    x1: f64,
+    x2: f64,
+    y1: f64,
+    y2: f64,
+}
+
+impl BiquadState {
+    fn process(&mut self, input: f64, coefficients: BiquadCoefficients) -> f64 {
+        let output =
+            coefficients.b0 * input + coefficients.b1 * self.x1 + coefficients.b2 * self.x2
+                - coefficients.a1 * self.y1
+                - coefficients.a2 * self.y2;
+        self.x2 = self.x1;
+        self.x1 = input;
+        self.y2 = self.y1;
+        self.y1 = output;
+        output
+    }
+}
+
+/// Apply the two-stage K-weighting filter defined by ITU-R BS.1770.
+fn k_weight(audio: &DecodedAudio) -> Vec<f32> {
+    let channels = audio.channels as usize;
+    if channels == 0 || audio.sample_rate == 0 {
+        return Vec::new();
+    }
+
+    let shelf = k_weighting_shelf(audio.sample_rate as f64);
+    let high_pass = k_weighting_high_pass(audio.sample_rate as f64);
+    let mut shelf_state = vec![BiquadState::default(); channels];
+    let mut high_pass_state = vec![BiquadState::default(); channels];
+    let mut output = Vec::with_capacity(audio.samples.len());
+
+    for frame in audio.samples.chunks(channels) {
+        for (channel, sample) in frame.iter().enumerate() {
+            let input = if sample.is_finite() {
+                *sample as f64
+            } else {
+                0.0
+            };
+            let stage_one = shelf_state[channel].process(input, shelf);
+            let filtered = high_pass_state[channel].process(stage_one, high_pass);
+            output.push(filtered as f32);
+        }
+    }
+
+    output
+}
+
+fn k_weighting_shelf(sample_rate: f64) -> BiquadCoefficients {
+    let frequency = 1_681.974_450_955_533;
+    let gain_db = 3.999_843_853_973_347;
+    let q = 0.707_175_236_955_419_6;
+    let k = (std::f64::consts::PI * frequency / sample_rate).tan();
+    let vh = 10.0f64.powf(gain_db / 20.0);
+    let vb = vh.powf(0.499_666_774_154_541_6);
+    let a0 = 1.0 + k / q + k * k;
+
+    BiquadCoefficients {
+        b0: (vh + vb * k / q + k * k) / a0,
+        b1: 2.0 * (k * k - vh) / a0,
+        b2: (vh - vb * k / q + k * k) / a0,
+        a1: 2.0 * (k * k - 1.0) / a0,
+        a2: (1.0 - k / q + k * k) / a0,
+    }
+}
+
+fn k_weighting_high_pass(sample_rate: f64) -> BiquadCoefficients {
+    let frequency = 38.135_470_876_024_44;
+    let q = 0.500_327_037_323_877_3;
+    let k = (std::f64::consts::PI * frequency / sample_rate).tan();
+    let a0 = 1.0 + k / q + k * k;
+
+    BiquadCoefficients {
+        b0: 1.0 / a0,
+        b1: -2.0 / a0,
+        b2: 1.0 / a0,
+        a1: 2.0 * (k * k - 1.0) / a0,
+        a2: (1.0 - k / q + k * k) / a0,
+    }
+}
+
+fn channel_energy(samples: &[f32], channels: usize) -> f64 {
+    if samples.is_empty() || channels == 0 {
+        return 0.0;
+    }
+    let frames = samples.len() / channels;
+    if frames == 0 {
+        return 0.0;
+    }
+    samples
+        .iter()
+        .filter(|sample| sample.is_finite())
+        .map(|sample| (*sample as f64).powi(2))
+        .sum::<f64>()
+        / frames as f64
+}
+
+fn energy_to_lufs(energy: f64) -> f64 {
+    if !energy.is_finite() || energy <= 1e-20 {
+        -100.0
+    } else {
+        -0.691 + 10.0 * energy.log10()
+    }
+}
+
+/// ITU-R BS.1770 K-weighted integrated loudness for mono/stereo material.
+#[cfg(test)]
 fn compute_lufs(audio: &DecodedAudio) -> f64 {
     let channels = audio.channels as usize;
     if audio.samples.is_empty() || channels == 0 {
         return -100.0;
     }
 
-    // K-weighting approximation: apply simple high-shelf boost
-    // For a proper implementation we'd use a biquad filter chain,
-    // but this gives reasonable results for analysis purposes.
-    let samples = &audio.samples;
+    compute_lufs_weighted(&k_weight(audio), audio.sample_rate, channels)
+}
+
+fn compute_lufs_weighted(samples: &[f32], sample_rate: u32, channels: usize) -> f64 {
     let frame_count = samples.len() / channels;
 
     // Gating block size: 400ms
-    let block_size = (audio.sample_rate as f64 * 0.4) as usize;
+    let block_size = (sample_rate as f64 * 0.4) as usize;
     let hop_size = block_size / 4; // 75% overlap
 
     if frame_count < block_size {
-        // Too short for proper gating, return simple RMS-based estimate
-        let rms_db = compute_rms_db(samples);
-        return rms_db - 0.691; // approximate K-weighting offset
+        let energy = channel_energy(samples, channels);
+        return energy_to_lufs(energy);
     }
 
-    let mut block_loudness: Vec<f64> = Vec::new();
+    let mut block_loudness: Vec<(f64, f64)> = Vec::new();
 
     let mut pos = 0;
     while pos + block_size <= frame_count {
         let mut sum_sq = 0.0f64;
-        let mut count = 0usize;
-
         for frame_idx in pos..pos + block_size {
             for ch in 0..channels {
                 let sample = samples[frame_idx * channels + ch] as f64;
                 sum_sq += sample * sample;
-                count += 1;
             }
         }
 
-        let mean_sq = sum_sq / count as f64;
+        // BS.1770 sums channel mean-square energies; mono/stereo weights are 1.0.
+        let mean_sq = sum_sq / block_size as f64;
         if mean_sq > 0.0 {
-            let loudness = -0.691 + 10.0 * mean_sq.log10();
-            block_loudness.push(loudness);
+            block_loudness.push((mean_sq, energy_to_lufs(mean_sq)));
         }
 
         pos += hop_size;
@@ -125,46 +336,47 @@ fn compute_lufs(audio: &DecodedAudio) -> f64 {
     }
 
     // Absolute gating threshold: -70 LUFS
-    let above_abs_gate: Vec<f64> = block_loudness
+    let above_abs_gate: Vec<(f64, f64)> = block_loudness
         .iter()
         .copied()
-        .filter(|&l| l > -70.0)
+        .filter(|(_, loudness)| *loudness >= -70.0)
         .collect();
 
     if above_abs_gate.is_empty() {
         return -100.0;
     }
 
-    // Relative gating threshold: mean of above absolute gate - 10 LU
-    let mean_above: f64 = above_abs_gate.iter().sum::<f64>() / above_abs_gate.len() as f64;
-    let relative_gate = mean_above - 10.0;
+    // The relative gate is derived from mean energy, not an arithmetic mean of dB values.
+    let mean_above =
+        above_abs_gate.iter().map(|(energy, _)| energy).sum::<f64>() / above_abs_gate.len() as f64;
+    let relative_gate = energy_to_lufs(mean_above) - 10.0;
 
     let gated: Vec<f64> = above_abs_gate
         .into_iter()
-        .filter(|&l| l > relative_gate)
+        .filter(|(_, loudness)| *loudness >= relative_gate)
+        .map(|(energy, _)| energy)
         .collect();
 
     if gated.is_empty() {
         return -100.0;
     }
 
-    gated.iter().sum::<f64>() / gated.len() as f64
+    energy_to_lufs(gated.iter().sum::<f64>() / gated.len() as f64)
 }
 
-/// Maximum short-term loudness (3-second window).
-
-fn compute_short_term_lufs_max(audio: &DecodedAudio) -> f64 {
-    let channels = audio.channels as usize;
-    if audio.samples.is_empty() || channels == 0 {
-        return -100.0;
-    }
-
-    let frame_count = audio.samples.len() / channels;
-    let window_size = (audio.sample_rate as f64 * 3.0) as usize;
-    let hop_size = (audio.sample_rate as f64 * 1.0) as usize;
+fn compute_windowed_loudness_max(
+    samples: &[f32],
+    sample_rate: u32,
+    channels: usize,
+    window_seconds: f64,
+    hop_seconds: f64,
+) -> f64 {
+    let frame_count = samples.len() / channels;
+    let window_size = (sample_rate as f64 * window_seconds) as usize;
+    let hop_size = (sample_rate as f64 * hop_seconds) as usize;
 
     if frame_count < window_size {
-        return compute_lufs(audio);
+        return energy_to_lufs(channel_energy(samples, channels));
     }
 
     let mut max_loudness = -100.0f64;
@@ -172,19 +384,16 @@ fn compute_short_term_lufs_max(audio: &DecodedAudio) -> f64 {
 
     while pos + window_size <= frame_count {
         let mut sum_sq = 0.0f64;
-        let mut count = 0usize;
-
         for frame_idx in pos..pos + window_size {
             for ch in 0..channels {
-                let sample = audio.samples[frame_idx * channels + ch] as f64;
+                let sample = samples[frame_idx * channels + ch] as f64;
                 sum_sq += sample * sample;
-                count += 1;
             }
         }
 
-        let mean_sq = sum_sq / count as f64;
+        let mean_sq = sum_sq / window_size as f64;
         if mean_sq > 0.0 {
-            let loudness = -0.691 + 10.0 * mean_sq.log10();
+            let loudness = energy_to_lufs(mean_sq);
             if loudness > max_loudness {
                 max_loudness = loudness;
             }
@@ -196,8 +405,53 @@ fn compute_short_term_lufs_max(audio: &DecodedAudio) -> f64 {
     max_loudness
 }
 
-/// Dynamic range: difference between peak loudness of loud and quiet sections.
+fn compute_loudness_range(
+    samples: &[f32],
+    sample_rate: u32,
+    channels: usize,
+    integrated_lufs: f64,
+) -> f64 {
+    if channels == 0 || samples.is_empty() {
+        return 0.0;
+    }
+    let frames = samples.len() / channels;
+    let window = sample_rate as usize * 3;
+    let hop = sample_rate as usize;
+    if frames < window || hop == 0 {
+        return 0.0;
+    }
 
+    let relative_gate = integrated_lufs - 20.0;
+    let mut values = Vec::new();
+    let mut position = 0;
+    while position + window <= frames {
+        let start = position * channels;
+        let end = (position + window) * channels;
+        let loudness = energy_to_lufs(channel_energy(&samples[start..end], channels));
+        if loudness >= -70.0 && loudness >= relative_gate {
+            values.push(loudness);
+        }
+        position += hop;
+    }
+
+    if values.len() < 2 {
+        return 0.0;
+    }
+    values.sort_by(f64::total_cmp);
+    let low = percentile(&values, 0.10);
+    let high = percentile(&values, 0.95);
+    (high - low).max(0.0)
+}
+
+fn percentile(sorted: &[f64], percentile: f64) -> f64 {
+    let index = percentile.clamp(0.0, 1.0) * (sorted.len() - 1) as f64;
+    let lower = index.floor() as usize;
+    let upper = index.ceil() as usize;
+    let fraction = index - lower as f64;
+    sorted[lower] * (1.0 - fraction) + sorted[upper] * fraction
+}
+
+/// Dynamic range: difference between peak loudness of loud and quiet sections.
 fn compute_dynamic_range(audio: &DecodedAudio) -> f64 {
     let channels = audio.channels as usize;
     if audio.samples.is_empty() || channels == 0 {
@@ -238,7 +492,7 @@ fn compute_dynamic_range(audio: &DecodedAudio) -> f64 {
         return 0.0;
     }
 
-    window_rms.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    window_rms.sort_by(f64::total_cmp);
 
     let top_10 = &window_rms[window_rms.len() * 9 / 10..];
     let bottom_10 = &window_rms[..window_rms.len() / 10];
@@ -254,7 +508,6 @@ fn compute_dynamic_range(audio: &DecodedAudio) -> f64 {
 }
 
 /// Stereo width: 0.0 = mono, 1.0 = full stereo, >1.0 = out-of-phase content.
-
 fn compute_stereo_width(audio: &DecodedAudio) -> f64 {
     if audio.channels < 2 {
         return 0.0;
@@ -286,8 +539,73 @@ fn compute_stereo_width(audio: &DecodedAudio) -> f64 {
     ratio.sqrt().min(2.0)
 }
 
-/// Compute energy in 7 frequency bands using a basic DFT approach.
+fn compute_stereo_correlation(audio: &DecodedAudio) -> f64 {
+    if audio.channels < 2 {
+        return 1.0;
+    }
+    let channels = audio.channels as usize;
+    let frames = audio.samples.len() / channels;
+    if frames == 0 {
+        return 0.0;
+    }
 
+    let mut sum_left = 0.0;
+    let mut sum_right = 0.0;
+    for frame in audio.samples.chunks(channels) {
+        sum_left += frame[0] as f64;
+        sum_right += frame[1] as f64;
+    }
+    let mean_left = sum_left / frames as f64;
+    let mean_right = sum_right / frames as f64;
+
+    let mut covariance = 0.0;
+    let mut left_energy = 0.0;
+    let mut right_energy = 0.0;
+    for frame in audio.samples.chunks(channels) {
+        let left = frame[0] as f64 - mean_left;
+        let right = frame[1] as f64 - mean_right;
+        covariance += left * right;
+        left_energy += left * left;
+        right_energy += right * right;
+    }
+
+    let denominator = (left_energy * right_energy).sqrt();
+    if denominator <= 1e-20 {
+        1.0
+    } else {
+        (covariance / denominator).clamp(-1.0, 1.0)
+    }
+}
+
+fn compute_dc_offset(audio: &DecodedAudio) -> f64 {
+    let channels = audio.channels as usize;
+    if channels == 0 || audio.samples.is_empty() {
+        return 0.0;
+    }
+
+    let mut sums = vec![0.0f64; channels];
+    let mut frames = 0usize;
+    for frame in audio.samples.chunks(channels) {
+        if frame.len() != channels {
+            break;
+        }
+        for (channel, sample) in frame.iter().enumerate() {
+            if sample.is_finite() {
+                sums[channel] += *sample as f64;
+            }
+        }
+        frames += 1;
+    }
+    if frames == 0 {
+        return 0.0;
+    }
+
+    sums.into_iter()
+        .map(|sum| (sum / frames as f64).abs())
+        .fold(0.0, f64::max)
+}
+
+/// Compute energy in 7 frequency bands using a basic DFT approach.
 fn compute_frequency_bands(audio: &DecodedAudio) -> FrequencyBands {
     // Use mono mixdown
     let mono: Vec<f64> = if audio.channels >= 2 {
@@ -333,12 +651,14 @@ fn compute_frequency_bands(audio: &DecodedAudio) -> FrequencyBands {
 
     // Use Goertzel-like energy estimation on overlapping windows
     let window_size = 4096.min(mono.len());
-    let num_windows = (mono.len() / window_size).max(1);
+    let available_windows = (mono.len() / window_size).max(1);
+    let num_windows = available_windows.min(64);
+    let window_stride = (available_windows / num_windows).max(1);
 
     let mut band_energies = [0.0f64; 7];
 
     for w in 0..num_windows {
-        let start = w * window_size;
+        let start = w * window_stride * window_size;
         let end = (start + window_size).min(mono.len());
         let segment = &mono[start..end];
         let n = segment.len();
@@ -411,7 +731,6 @@ fn compute_frequency_bands(audio: &DecodedAudio) -> FrequencyBands {
 mod tests {
     use super::super::decode::DecodedAudio;
     use super::*;
-    use crate::types::FrequencyBands;
 
     /// Helper to create test audio data.
     fn create_test_audio(samples: Vec<f32>, sample_rate: u32, channels: u16) -> DecodedAudio {
@@ -425,7 +744,12 @@ mod tests {
     }
 
     /// Helper to create sine wave samples.
-    fn create_sine_wave(frequency: f32, duration_secs: f64, sample_rate: u32, amplitude: f32) -> Vec<f32> {
+    fn create_sine_wave(
+        frequency: f32,
+        duration_secs: f64,
+        sample_rate: u32,
+        amplitude: f32,
+    ) -> Vec<f32> {
         let num_samples = (sample_rate as f64 * duration_secs) as usize;
         (0..num_samples)
             .map(|i| {
@@ -504,7 +828,10 @@ mod tests {
 
         let audio = create_test_audio(samples, 48000, 2);
         let width = compute_stereo_width(&audio);
-        assert!((width - 0.0).abs() < 0.01, "Mono audio should have 0 stereo width");
+        assert!(
+            (width - 0.0).abs() < 0.01,
+            "Mono audio should have 0 stereo width"
+        );
     }
 
     /// Test stereo width calculation with wide stereo.
@@ -535,22 +862,9 @@ mod tests {
     #[test]
     fn test_dynamic_range() {
         // Audio with varying levels for better dynamic range detection
-        let mut samples = Vec::new();
-
-        // Very quiet section
-        for _ in 0..12000 {
-            samples.push(0.001);
-        }
-
-        // Moderate section
-        for _ in 0..12000 {
-            samples.push(0.1);
-        }
-
-        // Loud section
-        for _ in 0..12000 {
-            samples.push(0.5);
-        }
+        let mut samples = vec![0.001; 12000];
+        samples.extend(std::iter::repeat_n(0.1, 12000));
+        samples.extend(std::iter::repeat_n(0.5, 12000));
 
         // Interleaved stereo
         let stereo_samples: Vec<f32> = samples.iter().flat_map(|&s| [s, s]).collect();
@@ -572,9 +886,17 @@ mod tests {
         let bands = compute_frequency_bands(&audio);
 
         // Just verify that the bands are calculated (not all -100)
-        let total_energy = bands.sub_bass + bands.bass + bands.low_mid + bands.mid
-            + bands.upper_mid + bands.presence + bands.brilliance;
-        assert!(total_energy > -600.0, "Should have some energy in frequency bands");
+        let total_energy = bands.sub_bass
+            + bands.bass
+            + bands.low_mid
+            + bands.mid
+            + bands.upper_mid
+            + bands.presence
+            + bands.brilliance;
+        assert!(
+            total_energy > -600.0,
+            "Should have some energy in frequency bands"
+        );
     }
 
     /// Test empty sample handling.
@@ -607,5 +929,4 @@ mod tests {
         // Just verify bands are calculated, not checking specific energy
         assert!(bands.bass > -100.0, "Bass band should be calculated");
     }
-
 }

@@ -16,7 +16,7 @@ pub struct MasterArgs {
     #[arg(short, long)]
     pub reference: Option<PathBuf>,
 
-    /// Mastering backend: auto, matchering, ai, local-ml
+    /// Mastering backend: auto, native, matchering, ai, local-ml
     #[arg(short, long, default_value = "auto")]
     pub backend: String,
 
@@ -32,7 +32,7 @@ pub struct MasterArgs {
     #[arg(long)]
     pub bit_depth: Option<u16>,
 
-    /// Output format: wav, flac, mp3
+    /// Output format: wav, aiff, flac, mp3, aac
     #[arg(short, long)]
     pub format: Option<String>,
 
@@ -51,6 +51,10 @@ pub struct MasterArgs {
     /// Analyze only, don't process
     #[arg(long)]
     pub dry_run: bool,
+
+    /// Replace an existing output file after explicit command-line authorization
+    #[arg(long)]
+    pub force: bool,
 }
 
 pub async fn run(args: MasterArgs) -> Result<()> {
@@ -63,10 +67,7 @@ pub async fn run(args: MasterArgs) -> Result<()> {
     );
 
     let backend: Backend = args.backend.parse()?;
-    let ai_provider: Option<AiProvider> = args
-        .ai_provider
-        .map(|s| s.parse())
-        .transpose()?;
+    let ai_provider: Option<AiProvider> = args.ai_provider.map(|s| s.parse()).transpose()?;
     let format: Option<AudioFormat> = args.format.map(|s| s.parse()).transpose()?;
     let preset: Option<Preset> = args.preset.map(|s| s.parse()).transpose()?;
 
@@ -98,23 +99,36 @@ pub async fn run(args: MasterArgs) -> Result<()> {
         args.input.display().to_string().white()
     );
 
-    let spinner = indicatif::ProgressBar::new_spinner();
-    spinner.set_style(
-        indicatif::ProgressStyle::default_spinner()
-            .template("{spinner:.cyan} {msg}")
+    let progress = indicatif::ProgressBar::new(100);
+    progress.set_style(
+        indicatif::ProgressStyle::default_bar()
+            .template("{bar:30.cyan/blue} {pos:>3}% {msg}")
             .unwrap(),
     );
-    spinner.set_message("Processing...");
-    spinner.enable_steady_tick(std::time::Duration::from_millis(100));
+    progress.set_message("Processing...");
+    let progress_view = progress.clone();
+    let control = mastering_core::control::ProcessingControl::with_callback(move |update| {
+        progress_view.set_position((update.fraction * 100.0).round() as u64);
+        progress_view.set_message(update.message);
+    });
+    let interrupt_control = control.clone();
+    tokio::spawn(async move {
+        if tokio::signal::ctrl_c().await.is_ok() {
+            interrupt_control.cancel();
+        }
+    });
 
-    let result = pipeline::run(&job, &config).await?;
+    let result = pipeline::run_with_control_and_policy(&job, &config, control, args.force).await?;
 
-    spinner.finish_and_clear();
+    progress.finish_and_clear();
 
     // Print results
     println!("\n{}", "Results".bold().green());
     println!("  Backend:  {}", result.backend_used.cyan());
-    println!("  Output:   {}", result.output_path.display().to_string().white());
+    println!(
+        "  Output:   {}",
+        result.output_path.display().to_string().white()
+    );
 
     if let Some(ref pre) = result.pre_analysis {
         println!("\n{}", "Input Analysis".bold().yellow());
@@ -143,11 +157,21 @@ pub async fn run(args: MasterArgs) -> Result<()> {
             params.compression.ratio, params.compression.threshold_db
         );
         if params.limiter.enabled {
-            println!("  Limiter:      ceiling {:.1} dB", params.limiter.ceiling_db);
+            println!(
+                "  Limiter:      ceiling {:.1} dB",
+                params.limiter.ceiling_db
+            );
         } else {
             println!("  Limiter:      disabled");
         }
         println!("  Target LUFS:  {:.1}", params.target_lufs);
+    }
+
+    if !result.warnings.is_empty() {
+        println!("\n{}", "Warnings".bold().yellow());
+        for warning in &result.warnings {
+            println!("  [{}] {}", warning.code, warning.message);
+        }
     }
 
     println!();

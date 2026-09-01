@@ -7,13 +7,12 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
-use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
 use crate::types::AudioAnalysis;
 
 /// Cache entry for analysis results.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CacheEntry {
     /// Hash of the input file content
     pub file_hash: String,
@@ -21,6 +20,8 @@ pub struct CacheEntry {
     pub created_at: SystemTime,
     /// Time-to-live for this entry
     pub ttl: Duration,
+    /// Cached, versioned measurement report.
+    pub analysis: AudioAnalysis,
 }
 
 /// Cache for audio analysis results.
@@ -47,26 +48,21 @@ impl AnalysisCache {
 
     /// Get a cached analysis result for a file.
     pub async fn get(&self, path: &Path) -> Option<AudioAnalysis> {
+        let current_hash = compute_file_hash(path).ok()?;
         let entries = self.entries.read().await;
-        // Check if entry exists and is not expired
-        // In a real implementation, we'd store and return the actual analysis
         entries.get(path).and_then(|entry| {
-            if entry.created_at + entry.ttl > SystemTime::now() {
-                // Entry is valid
-                Some(()) // Placeholder - would return cached analysis
-            } else {
-                None
-            }
-        });
-        None // Placeholder - return actual cached analysis
+            (entry.created_at + entry.ttl > SystemTime::now() && entry.file_hash == current_hash)
+                .then(|| entry.analysis.clone())
+        })
     }
 
     /// Store an analysis result in the cache.
-    pub async fn put(&self, path: PathBuf, _analysis: &AudioAnalysis) {
+    pub async fn put(&self, path: PathBuf, analysis: &AudioAnalysis) {
         let mut entries = self.entries.write().await;
 
-        // Calculate file hash (simplified - would use actual content hash)
-        let file_hash = format!("{:?}", path); // Placeholder
+        let Ok(file_hash) = compute_file_hash(&path) else {
+            return;
+        };
 
         // Evict oldest entry if at capacity
         if entries.len() >= self.max_entries {
@@ -85,6 +81,7 @@ impl AnalysisCache {
                 file_hash,
                 created_at: SystemTime::now(),
                 ttl: self.default_ttl,
+                analysis: analysis.clone(),
             },
         );
     }
@@ -111,6 +108,11 @@ impl AnalysisCache {
     /// Get the number of cached entries.
     pub async fn len(&self) -> usize {
         self.entries.read().await.len()
+    }
+
+    /// Return whether the cache contains no entries.
+    pub async fn is_empty(&self) -> bool {
+        self.entries.read().await.is_empty()
     }
 }
 

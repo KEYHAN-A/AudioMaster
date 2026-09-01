@@ -1,6 +1,6 @@
 <script setup>
-import { ref, watch } from "vue";
-import { invoke } from "@tauri-apps/api/core";
+import { watch } from "vue";
+import { useLmStudio } from "../composables/useLmStudio.js";
 
 const props = defineProps({
   visible: Boolean,
@@ -11,42 +11,36 @@ const props = defineProps({
 
 const emit = defineEmits(["close", "master"]);
 
-const lmstudioModels = ref([]);
-const lmstudioOnline = ref(null);
+const { state: lm, refresh } = useLmStudio();
 
 watch(
   () => props.state?.selectedProvider,
   async (provider) => {
     if (provider === "lmstudio") {
-      await loadLmStudioModels();
+      const endpoint = props.state?.config?.ai?.lmstudio?.endpoint || null;
+      await refresh(endpoint);
     }
   }
 );
 
-async function loadLmStudioModels() {
-  try {
-    const endpoint = props.state?.config?.ai?.lmstudio?.endpoint || null;
-    const status = await invoke("lmstudio_status", { endpoint });
-    lmstudioOnline.value = status.running;
-    if (status.running) {
-      lmstudioModels.value = await invoke("lmstudio_models", { endpoint });
-    } else {
-      lmstudioModels.value = [];
-    }
-  } catch (_) {
-    lmstudioOnline.value = false;
-    lmstudioModels.value = [];
-  }
+function modelLabel(m) {
+  let label = m.display_name || m.id;
+  const parts = [];
+  if (m.size_gb) parts.push(`${m.size_gb} GB`);
+  if (m.quant) parts.push(m.quant);
+  if (parts.length) label += ` (${parts.join(", ")})`;
+  if (m.loaded) label += " [loaded]";
+  return label;
 }
 </script>
 
 <template>
   <Transition name="scale">
     <div v-if="visible" class="dialog-overlay" @click.self="emit('close')">
-      <div class="dialog" style="width: 560px;">
+      <div class="dialog" style="width: 560px;" role="dialog" aria-modal="true" aria-labelledby="master-dialog-title">
         <div class="dialog-header">
-          <h2 class="dialog-title gradient-text">Master {{ state.tracks?.length || 0 }} Track(s)</h2>
-          <button class="close-btn" @click="emit('close')">&times;</button>
+          <h2 id="master-dialog-title" class="dialog-title gradient-text">Master {{ state.tracks?.length || 0 }} Track(s)</h2>
+          <button class="close-btn" aria-label="Close mastering settings" @click="emit('close')">&times;</button>
         </div>
 
         <div class="dialog-body">
@@ -65,6 +59,30 @@ async function loadLmStudioModels() {
                 <span class="preset-lufs">{{ preset.target_lufs }} LUFS</span>
                 <span class="preset-desc">{{ preset.description }}</span>
               </button>
+            </div>
+          </div>
+
+          <div v-if="state.tracks?.length > 1" class="form-group">
+            <label class="toggle-label">
+              <input type="checkbox" v-model="state.albumMode" />
+              <span class="toggle-text">Album continuity mode</span>
+            </label>
+            <p class="form-hint">Preserves intentional song-to-song loudness differences while keeping the release cohesive.</p>
+            <label v-if="state.albumMode" class="form-label">Maximum relative offset: {{ state.albumMaxRelativeOffsetLu }} LU</label>
+            <input
+              v-if="state.albumMode"
+              type="range"
+              v-model.number="state.albumMaxRelativeOffsetLu"
+              min="0"
+              max="3"
+              step="0.25"
+            />
+            <div v-if="state.albumMode" class="album-adjustments">
+              <label v-for="track in state.tracks" :key="track.id" class="album-adjustment">
+                <span>{{ track.name }}</span>
+                <input v-model.number="track.albumOffsetLu" class="form-input" type="number" min="-3" max="3" step="0.25" aria-label="Per-track loudness adjustment in LU" />
+                <span>LU</span>
+              </label>
             </div>
           </div>
 
@@ -119,21 +137,21 @@ async function loadLmStudioModels() {
               <div class="lmstudio-row">
                 <select v-model="state.selectedLmStudioModel" class="form-input">
                   <option value="">-- Select Model --</option>
-                  <option v-for="m in lmstudioModels" :key="m.id" :value="m.id">
-                    {{ m.id }}
+                  <option v-for="m in lm.models" :key="m.id" :value="m.id">
+                    {{ modelLabel(m) }}
                   </option>
                 </select>
                 <span
                   class="lmstudio-status"
-                  :class="lmstudioOnline ? 'status-ok' : 'status-err'"
+                  :class="lm.online ? 'status-ok' : 'status-err'"
                 >
-                  {{ lmstudioOnline ? 'Online' : 'Offline' }}
+                  {{ lm.online ? 'Online' : 'Offline' }}
                 </span>
-                <button class="btn btn-ghost btn-sm" @click="loadLmStudioModels">
+                <button class="btn btn-ghost btn-sm" @click="refresh(state?.config?.ai?.lmstudio?.endpoint || null)">
                   Refresh
                 </button>
               </div>
-              <p v-if="lmstudioOnline === false" class="form-hint">
+              <p v-if="lm.online === false" class="form-hint">
                 LM Studio is not running. Start it and load a model first.
               </p>
             </div>
@@ -157,8 +175,10 @@ async function loadLmStudioModels() {
               <label class="form-label">Format</label>
               <select v-model="state.outputFormat" class="form-input">
                 <option value="wav">WAV</option>
+                <option value="aiff">AIFF</option>
                 <option value="flac">FLAC</option>
                 <option value="mp3">MP3</option>
+                <option value="aac">AAC (distribution)</option>
               </select>
             </div>
           </div>
@@ -245,4 +265,6 @@ async function loadLmStudioModels() {
   color: var(--text-muted);
   margin-top: 4px;
 }
+.album-adjustments { display: grid; gap: 6px; margin-top: 8px; max-height: 120px; overflow: auto; }
+.album-adjustment { display: grid; grid-template-columns: minmax(0, 1fr) 80px 24px; gap: 8px; align-items: center; font-size: 11px; }
 </style>

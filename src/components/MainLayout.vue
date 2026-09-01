@@ -8,7 +8,9 @@ import WaveformCanvas from "./WaveformCanvas.vue";
 import MasteringDialog from "./MasteringDialog.vue";
 import ProcessingDialog from "./ProcessingDialog.vue";
 import SettingsDialog from "./SettingsDialog.vue";
+import ErrorDialog from "./ErrorDialog.vue";
 import ToastNotification from "./ToastNotification.vue";
+import ABPreview from "./ABPreview.vue";
 
 const {
   state,
@@ -25,8 +27,11 @@ const {
   setReferenceFile,
   analyzeAll,
   analyzeSelected,
-  masterAll,
   masterSelected,
+  masterAll,
+  masterAlbum,
+  cancelMastering,
+  createPreview,
   clearAll,
 } = useMastering();
 
@@ -105,10 +110,41 @@ async function handleAnalyzeAll() {
 
 async function handleMasterAll() {
   showMasterDialog.value = false;
-  await masterAll();
-  if (hasAnyResult.value) {
-    showToast("Mastering complete!", "success");
+  if (state.albumMode && state.tracks.length > 1) {
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    const outputDirectory = await open({ directory: true, multiple: false });
+    if (!outputDirectory) return;
+    await masterAlbum(outputDirectory);
+  } else {
+    await masterAll();
   }
+  if (hasAnyResult.value) {
+    if (state.lastWarnings.length > 0) {
+      showToast(`Mastering complete with ${state.lastWarnings.length} warning(s)`, "warning", 6000);
+    } else {
+      showToast("Mastering complete!", "success");
+    }
+  }
+}
+
+async function retryLastError() {
+  const error = state.error;
+  state.error = null;
+  if (!error) return;
+  if (error.trackId) selectTrack(error.trackId);
+  if (error.operation === "analysis") {
+    await analyzeSelected();
+  } else {
+    await masterSelected();
+  }
+}
+
+async function useNativeFallback() {
+  const error = state.error;
+  state.error = null;
+  if (error?.trackId) selectTrack(error.trackId);
+  state.selectedBackend = "native";
+  await masterSelected();
 }
 
 function handleDrop(e) {
@@ -266,17 +302,34 @@ function handleDrop(e) {
             :postAnalysis="selectedTrack?.postAnalysis || selectedTrack?.result?.post_analysis"
           />
 
+          <ABPreview
+            v-if="selectedTrack?.analysis"
+            :busy="state.processing"
+            :preview="state.preview?.trackId === selectedTrack.id ? state.preview : null"
+            @render="createPreview(selectedTrack)"
+          />
+
+          <section v-if="state.albumResult" class="preview-panel glass-card" aria-label="Album verification report">
+            <div>
+              <strong>Album verified</strong>
+              <p>{{ state.albumResult.delivered_loudness_spread_lu.toFixed(2) }} LU delivered spread · report: {{ state.albumResult.report_path }}</p>
+            </div>
+          </section>
+
           <!-- Status bar -->
           <div class="status-bar">
-            <span class="status-text">AudioMaster v1.0.0</span>
+            <span class="status-text">AudioMaster v1.2.0</span>
             <span class="status-text">
               {{ state.tracks.length }} track{{ state.tracks.length !== 1 ? 's' : '' }}
             </span>
             <span v-if="state.error" class="status-text status-error" @click="state.error = null">
-              {{ state.error }}
+              {{ state.error.message || state.error }}
             </span>
             <span v-else class="status-text status-dim">
               {{ state.processing ? state.processingMessage : 'Ready' }}
+            </span>
+            <span v-if="state.lastWarnings.length" class="status-text status-error" :title="state.lastWarnings.map(w => `${w.track}: ${w.message}`).join('\n')">
+              {{ state.lastWarnings.length }} warning(s)
             </span>
             <span class="status-text status-dim">
               Backend: {{ state.selectedBackend }}
@@ -291,6 +344,7 @@ function handleDrop(e) {
       :visible="state.processing"
       :message="state.processingMessage"
       :progress="state.processingProgress"
+      @cancel="cancelMastering"
     />
 
     <MasteringDialog
@@ -306,6 +360,14 @@ function handleDrop(e) {
       :visible="showSettings"
       :config="state.config"
       @close="showSettings = false"
+    />
+
+    <ErrorDialog
+      :visible="Boolean(state.error)"
+      :error="state.error"
+      @close="state.error = null"
+      @retry="retryLastError"
+      @fallback="useNativeFallback"
     />
 
     <ToastNotification />

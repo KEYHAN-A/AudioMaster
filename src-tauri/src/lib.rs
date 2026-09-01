@@ -1,3 +1,4 @@
+mod cloud;
 mod commands;
 mod telemetry;
 
@@ -12,20 +13,36 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
-        .plugin(tauri_plugin_store::Builder::default().build())
         .invoke_handler(tauri::generate_handler![
             commands::analyze_file,
             commands::master_file,
+            commands::cancel_mastering,
+            commands::create_mastering_preview,
             commands::master_batch,
+            commands::master_album,
             commands::get_config,
             commands::save_config,
+            commands::clear_provider_credential,
             commands::check_backends,
             commands::diagnose_backends,
             commands::get_presets,
             commands::get_waveform_data,
             commands::lmstudio_status,
             commands::lmstudio_models,
+            commands::lmstudio_load_model,
+            commands::lmstudio_unload_model,
+            commands::lmstudio_loaded_models,
+            commands::lmstudio_recommend_models,
             commands::detect_vram,
+            commands::export_diagnostic_bundle,
+            cloud::cloud_begin_login,
+            cloud::cloud_poll_login,
+            cloud::cloud_status,
+            cloud::cloud_logout,
+            cloud::cloud_pull_sync,
+            cloud::cloud_push_sync,
+            cloud::cloud_submit_feedback,
+            cloud::cloud_set_early_access,
         ])
         .setup(|app| {
             // Set project dir env var so mastering-core can find python scripts

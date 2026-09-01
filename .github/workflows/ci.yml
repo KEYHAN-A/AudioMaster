@@ -33,6 +33,8 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
 
       - name: Cache cargo
         uses: actions/cache@v4
@@ -49,17 +51,19 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libgtk-3-dev
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libgtk-3-dev ffmpeg
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
 
       - name: Run cargo check
-        run: cargo check -p mastering-core -p mastering-cli
+        run: cargo check --workspace
 
       - name: Run cargo test
-        run: cargo test -p mastering-core -p mastering-cli
+        run: cargo test --workspace
 
       - name: Run cargo clippy
-        run: cargo clippy -p mastering-core -p mastering-cli -- -D warnings
-        continue-on-error: true
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
   # -----------------------------------------------------------------------
   #  Security scanning
@@ -67,8 +71,6 @@ jobs:
   security:
     name: Security Audit
     runs-on: ubuntu-latest
-    continue-on-error: true
-
     steps:
       - uses: actions/checkout@v4
 
@@ -80,7 +82,6 @@ jobs:
 
       - name: Run cargo audit
         run: cargo audit
-        continue-on-error: true
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -93,7 +94,9 @@ jobs:
 
       - name: Run npm audit
         run: npm audit --audit-level=high
-        continue-on-error: true
+
+      - name: Validate Python compatibility adapters
+        run: python3 -m py_compile python/*.py
 
   # -----------------------------------------------------------------------
   #  Frontend build
@@ -115,7 +118,7 @@ jobs:
         run: npm ci
 
       - name: Build frontend
-        run: npx vite build
+        run: npm run build
 
       - name: Check bundle size
         run: |

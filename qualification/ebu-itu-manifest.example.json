@@ -1,0 +1,15 @@
+{
+  "suite": "EBU Loudness Test Set / ITU-R BS.1770",
+  "vectors": [
+    {
+      "file": "vectors/replace-with-approved-vector.wav",
+      "sha256": "replace-with-publisher-verified-sha256",
+      "expected_lufs": -23.0,
+      "expected_lra_lu": null,
+      "expected_true_peak_dbtp": null,
+      "loudness_tolerance_lu": 0.1,
+      "lra_tolerance_lu": 0.5,
+      "true_peak_tolerance_db": 0.1
+    }
+  ]
+}

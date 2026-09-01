@@ -8,7 +8,6 @@
     "dialog:default",
     "dialog:allow-open",
     "dialog:allow-save",
-    "shell:default",
-    "store:default"
+    "shell:default"
   ]
 }

@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use crate::types::{AiProvider, AudioFormat, Backend};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Config {
     #[serde(default)]
     pub general: GeneralConfig,
@@ -12,6 +12,25 @@ pub struct Config {
     pub ai: AiConfig,
     #[serde(default)]
     pub backends: BackendsConfig,
+    #[serde(default)]
+    pub cloud: CloudConfig,
+    #[serde(default)]
+    pub privacy: PrivacyConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PrivacyConfig {
+    /// Explicit opt-in for remote crash/error telemetry.
+    #[serde(default)]
+    pub telemetry_consent: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CloudConfig {
+    #[serde(default = "default_cloud_endpoint")]
+    pub endpoint: String,
+    #[serde(default = "default_cloud_sync_enabled")]
+    pub sync_enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -50,7 +69,7 @@ pub struct OllamaConfig {
     pub model: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct KeyhanStudioConfig {
     #[serde(default)]
     pub endpoint: String,
@@ -82,7 +101,7 @@ pub struct LmStudioConfig {
     pub model: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct BackendsConfig {
     #[serde(default)]
     pub matchering: MatcheringConfig,
@@ -142,18 +161,14 @@ fn default_ml_model() -> String {
 fn default_lmstudio_endpoint() -> String {
     "http://localhost:1234/v1".into()
 }
+fn default_cloud_endpoint() -> String {
+    "https://core.keyhan.info".into()
+}
+fn default_cloud_sync_enabled() -> bool {
+    true
+}
 
 // --- Default trait impls ---
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            general: GeneralConfig::default(),
-            ai: AiConfig::default(),
-            backends: BackendsConfig::default(),
-        }
-    }
-}
 
 impl Default for GeneralConfig {
     fn default() -> Self {
@@ -162,6 +177,15 @@ impl Default for GeneralConfig {
             default_bit_depth: default_bit_depth(),
             default_format: default_format(),
             target_lufs: default_target_lufs(),
+        }
+    }
+}
+
+impl Default for CloudConfig {
+    fn default() -> Self {
+        Self {
+            endpoint: default_cloud_endpoint(),
+            sync_enabled: default_cloud_sync_enabled(),
         }
     }
 }
@@ -197,15 +221,6 @@ impl Default for OllamaConfig {
     }
 }
 
-impl Default for KeyhanStudioConfig {
-    fn default() -> Self {
-        Self {
-            endpoint: String::new(),
-            api_key: String::new(),
-        }
-    }
-}
-
 impl Default for OpenAiConfig {
     fn default() -> Self {
         Self {
@@ -220,15 +235,6 @@ impl Default for AnthropicConfig {
         Self {
             api_key: String::new(),
             model: default_anthropic_model(),
-        }
-    }
-}
-
-impl Default for BackendsConfig {
-    fn default() -> Self {
-        Self {
-            matchering: MatcheringConfig::default(),
-            local_ml: LocalMlConfig::default(),
         }
     }
 }
@@ -274,10 +280,11 @@ impl Config {
     }
 
     pub fn load_from(path: &Path) -> Result<Self> {
-        let contents =
-            std::fs::read_to_string(path).with_context(|| format!("Reading config: {}", path.display()))?;
-        let config: Config =
-            toml::from_str(&contents).with_context(|| format!("Parsing config: {}", path.display()))?;
+        let contents = std::fs::read_to_string(path)
+            .with_context(|| format!("Reading config: {}", path.display()))?;
+        let mut config: Config = toml::from_str(&contents)
+            .with_context(|| format!("Parsing config: {}", path.display()))?;
+        config.migrate_legacy_endpoints();
         Ok(config)
     }
 
@@ -291,8 +298,7 @@ impl Config {
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("Creating config directory: {}", parent.display()))?;
         }
-        let contents =
-            toml::to_string_pretty(self).context("Serializing config")?;
+        let contents = toml::to_string_pretty(self).context("Serializing config")?;
         std::fs::write(path, &contents)
             .with_context(|| format!("Writing config: {}", path.display()))?;
         Ok(())
@@ -344,5 +350,14 @@ impl Config {
         }
 
         PathBuf::from("python")
+    }
+
+    fn migrate_legacy_endpoints(&mut self) {
+        if self.cloud.endpoint.trim_end_matches('/') == "https://api.keyhan.info" {
+            self.cloud.endpoint = default_cloud_endpoint();
+        }
+        if self.ai.keyhanstudio.endpoint.trim_end_matches('/') == "https://api.keyhan.info/ai/chat" {
+            self.ai.keyhanstudio.endpoint = "https://core.keyhan.info/audiomaster/advice".into();
+        }
     }
 }

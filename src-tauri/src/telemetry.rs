@@ -43,6 +43,13 @@ pub fn init_logging() -> Result<(), Box<dyn std::error::Error>> {
 
 /// Initialize Sentry error tracking.
 pub fn init_sentry() -> Option<sentry::ClientInitGuard> {
+    let consent = mastering_core::config::Config::load()
+        .map(|config| config.privacy.telemetry_consent)
+        .unwrap_or(false);
+    if !consent {
+        tracing::info!("Remote error tracking disabled because telemetry consent was not granted");
+        return None;
+    }
     // Only initialize if DSN is configured
     let dsn = std::env::var("SENTRY_DSN").ok();
 
@@ -81,22 +88,17 @@ pub fn add_breadcrumb(message: &str, category: &str) {
     });
 }
 
-/// Set user context for error tracking.
-pub fn set_user_context(session_id: &str) {
-    sentry::configure_scope(|scope| {
-        scope.set_user(Some(sentry::User {
-            id: Some(session_id.into()),
-            ..Default::default()
-        }));
-    });
-}
-
 /// Set processing context for error tracking.
 pub fn set_processing_context(backend: &str, preset: &str, file: &str) {
     sentry::configure_scope(|scope| {
         scope.set_tag("backend", backend);
         scope.set_tag("preset", preset);
-        scope.set_extra("input_file", file.into());
+        // Never send local paths or filenames to remote telemetry.
+        let extension = std::path::Path::new(file)
+            .extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or("unknown");
+        scope.set_tag("input_format", extension);
     });
 }
 
@@ -114,21 +116,22 @@ pub fn export_diagnostic_bundle() -> Result<PathBuf, Box<dyn std::error::Error>>
     // Collect recent logs
     let mut log_files: Vec<_> = std::fs::read_dir(&log_path)?
         .filter_map(|e| e.ok())
-        .filter(|e| {
-            e.path()
-                .extension()
-                .is_some_and(|ext| ext == "log")
-        })
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "log"))
         .collect();
-    log_files.sort_by_key(|e| e.metadata().ok().and_then(|m| m.modified().ok()).unwrap_or(std::time::UNIX_EPOCH));
+    log_files.sort_by_key(|e| {
+        e.metadata()
+            .ok()
+            .and_then(|m| m.modified().ok())
+            .unwrap_or(std::time::UNIX_EPOCH)
+    });
 
     for file in log_files.iter().rev().take(3) {
-        bundle.push_str(&format!("=== {} ===\n", file.path().display()));
+        bundle.push_str(&format!("=== {} ===\n", file.file_name().to_string_lossy()));
         if let Ok(contents) = std::fs::read_to_string(file.path()) {
             // Last 500 lines
             let lines: Vec<&str> = contents.lines().rev().take(500).collect();
             for line in lines.iter().rev() {
-                bundle.push_str(line);
+                bundle.push_str(&redact_local_paths(line));
                 bundle.push('\n');
             }
         }
@@ -139,10 +142,31 @@ pub fn export_diagnostic_bundle() -> Result<PathBuf, Box<dyn std::error::Error>>
     bundle.push_str("=== System Info ===\n");
     bundle.push_str(&format!("OS: {}\n", std::env::consts::OS));
     bundle.push_str(&format!("Arch: {}\n", std::env::consts::ARCH));
-    bundle.push_str(&format!("Python scripts dir: {}\n", mastering_core::config::Config::python_scripts_dir().display()));
+    bundle.push_str(&format!(
+        "Python compatibility resources available: {}\n",
+        mastering_core::config::Config::python_scripts_dir().exists()
+    ));
 
     std::fs::write(&output_path, &bundle)?;
     Ok(output_path)
+}
+
+fn redact_local_paths(line: &str) -> String {
+    line.split_whitespace()
+        .map(|token| {
+            if token.contains("/Users/")
+                || token.contains("/home/")
+                || token.contains("\\Users\\")
+                || token.contains(":\\")
+                || token.starts_with("file://")
+            {
+                "[REDACTED_PATH]"
+            } else {
+                token
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn log_dir() -> PathBuf {

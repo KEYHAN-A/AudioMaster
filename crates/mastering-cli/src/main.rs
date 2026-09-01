@@ -23,6 +23,9 @@ enum Commands {
     /// Master an audio track
     Master(commands::master::MasterArgs),
 
+    /// Master an ordered group of tracks with album-level loudness continuity
+    Album(commands::album::AlbumArgs),
+
     /// Analyze an audio file (loudness, spectrum, dynamics)
     Analyze(commands::analyze::AnalyzeArgs),
 
@@ -31,6 +34,9 @@ enum Commands {
 
     /// List available backends and check their status
     Backends,
+
+    /// Qualify loudness and true-peak meters against approved vectors
+    Qualify(commands::qualify::QualifyArgs),
 }
 
 #[tokio::main]
@@ -49,8 +55,10 @@ async fn main() -> anyhow::Result<()> {
 
     match cli.command {
         Commands::Master(args) => commands::master::run(args).await,
+        Commands::Album(args) => commands::album::run(args).await,
         Commands::Analyze(args) => commands::analyze::run(args).await,
         Commands::Config(args) => commands::config::run(args),
         Commands::Backends => commands::backends::run().await,
+        Commands::Qualify(args) => commands::qualify::run(args).await,
     }
 }

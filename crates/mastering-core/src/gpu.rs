@@ -55,18 +55,11 @@ pub fn detect_vram() -> Result<Vec<GpuInfo>> {
         }
 
         if trimmed.starts_with("Metal:") {
-            current_metal = trimmed
-                .trim_start_matches("Metal:")
-                .trim()
-                .to_string();
+            current_metal = trimmed.trim_start_matches("Metal:").trim().to_string();
         }
 
         if trimmed.contains("VRAM (Total):") {
-            let vram_str = trimmed
-                .split(':')
-                .last()
-                .unwrap_or("")
-                .trim();
+            let vram_str = trimmed.split(':').next_back().unwrap_or("").trim();
             let vram_mb = parse_vram_string(vram_str);
 
             if !current_chipset.is_empty() {
@@ -118,17 +111,17 @@ fn parse_vram_string(s: &str) -> u64 {
             .map(|v| (v * 1024.0) as u64)
             .unwrap_or(0)
     } else if s.ends_with("MB") {
-        s.trim_end_matches("MB")
-            .trim()
-            .parse::<u64>()
-            .unwrap_or(0)
+        s.trim_end_matches("MB").trim().parse::<u64>().unwrap_or(0)
     } else {
         0
     }
 }
 
 fn detect_total_ram_mb() -> Result<u64> {
-    let output = Command::new("sysctl").arg("-n").arg("hw.memsize").output()?;
+    let output = Command::new("sysctl")
+        .arg("-n")
+        .arg("hw.memsize")
+        .output()?;
     let mem_bytes: u64 = String::from_utf8_lossy(&output.stdout)
         .trim()
         .parse()
@@ -245,10 +238,29 @@ pub fn get_recommendations_for_vram(vram_mb: u64) -> Vec<ModelRecommendation> {
     let tiers = get_vram_tiers();
     tiers
         .iter()
-        .filter(|t| vram_mb >= t.vram_mb)
-        .last()
+        .rfind(|t| vram_mb >= t.vram_mb)
         .map(|t| t.recommended_models.clone())
         .unwrap_or_default()
+}
+
+/// Cross-reference VRAM-based recommendations with models available in LM Studio.
+/// Returns only recommended models whose ID partially matches an available model.
+pub fn recommend_from_available(
+    available_ids: &[String],
+    vram_mb: u64,
+) -> Vec<ModelRecommendation> {
+    let recommended = get_recommendations_for_vram(vram_mb);
+    recommended
+        .into_iter()
+        .filter(|rec| {
+            let rec_lower = rec.model_id.to_lowercase();
+            available_ids.iter().any(|a| {
+                let a_lower = a.to_lowercase();
+                // Match if either contains the other's key parts
+                a_lower.contains(&rec_lower) || rec_lower.contains(&a_lower)
+            })
+        })
+        .collect()
 }
 
 #[cfg(test)]

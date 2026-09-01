@@ -73,10 +73,44 @@ function dbDisplay(value) {
       </div>
 
       <div class="metric-card">
+        <span class="metric-label">LRA</span>
+        <span class="metric-value cool">{{ dbDisplay(analysis.loudness_range_lu) }} LU</span>
+        <span v-if="postAnalysis" class="metric-after">
+          {{ dbDisplay(postAnalysis.loudness_range_lu) }} LU
+        </span>
+      </div>
+
+      <div class="metric-card">
+        <span class="metric-label">PLR</span>
+        <span class="metric-value">{{ dbDisplay(analysis.peak_to_loudness_ratio) }} dB</span>
+        <span v-if="postAnalysis" class="metric-after">
+          {{ dbDisplay(postAnalysis.peak_to_loudness_ratio) }} dB
+        </span>
+      </div>
+
+      <div class="metric-card">
         <span class="metric-label">Width</span>
         <span class="metric-value">{{ (analysis.stereo_width * 100).toFixed(0) }}%</span>
         <span v-if="postAnalysis" class="metric-after">
           {{ (postAnalysis.stereo_width * 100).toFixed(0) }}%
+        </span>
+      </div>
+
+      <div class="metric-card">
+        <span class="metric-label">Correlation</span>
+        <span class="metric-value" :class="{ hot: analysis.stereo_correlation < 0 }">
+          {{ dbDisplay(analysis.stereo_correlation) }}
+        </span>
+        <span v-if="postAnalysis" class="metric-after">
+          {{ dbDisplay(postAnalysis.stereo_correlation) }}
+        </span>
+      </div>
+
+      <div v-if="analysis.clipped_samples > 0" class="metric-card">
+        <span class="metric-label">Clipped Samples</span>
+        <span class="metric-value hot">{{ analysis.clipped_samples }}</span>
+        <span v-if="postAnalysis" class="metric-after">
+          {{ postAnalysis.clipped_samples }}
         </span>
       </div>
     </div>

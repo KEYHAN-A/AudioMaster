@@ -11,9 +11,22 @@ pub async fn run() -> Result<()> {
     println!("\n{}", "Available Backends".bold().cyan());
 
     let backends = [
-        (Backend::Matchering, "Reference-based mastering (matches EQ, loudness, stereo width)"),
-        (Backend::Ai, "AI-assisted mastering (LLM suggests DSP parameters)"),
-        (Backend::LocalMl, "Local ML models (DeepAFx-ST, HuggingFace)"),
+        (
+            Backend::Native,
+            "Deterministic native mastering (offline, built-in)",
+        ),
+        (
+            Backend::Matchering,
+            "Reference-based mastering (matches EQ, loudness, stereo width)",
+        ),
+        (
+            Backend::Ai,
+            "AI-assisted mastering (LLM suggests DSP parameters)",
+        ),
+        (
+            Backend::LocalMl,
+            "Local ML models (DeepAFx-ST, HuggingFace)",
+        ),
     ];
 
     for (backend, description) in &backends {
@@ -35,7 +48,11 @@ pub async fn run() -> Result<()> {
 
     let providers = [
         ("Ollama (local)", !config.ai.ollama.endpoint.is_empty()),
-        ("KeyhanStudio", !config.ai.keyhanstudio.endpoint.is_empty() && !config.ai.keyhanstudio.api_key.is_empty()),
+        (
+            "KeyhanStudio",
+            !config.ai.keyhanstudio.endpoint.is_empty()
+                && !config.ai.keyhanstudio.api_key.is_empty(),
+        ),
         ("OpenAI", !config.ai.openai.api_key.is_empty()),
         ("Anthropic", !config.ai.anthropic.api_key.is_empty()),
     ];
