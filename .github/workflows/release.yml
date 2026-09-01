@@ -50,6 +50,9 @@ jobs:
     runs-on: ${{ matrix.platform }}
     strategy:
       fail-fast: false
+      # tauri-action updates one GitHub release; serialize platforms to avoid
+      # duplicate draft releases and lost assets.
+      max-parallel: 1
       matrix:
         include:
           - platform: macos-latest
