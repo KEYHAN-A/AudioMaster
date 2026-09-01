@@ -22,6 +22,9 @@ jobs:
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
 
+      - name: Install media test dependencies
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
       - name: Generate coverage report
         run: cargo llvm-cov -p mastering-core -p mastering-cli --lcov --output-path lcov.info
 
