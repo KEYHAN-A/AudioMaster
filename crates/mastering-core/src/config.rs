@@ -356,7 +356,8 @@ impl Config {
         if self.cloud.endpoint.trim_end_matches('/') == "https://api.keyhan.info" {
             self.cloud.endpoint = default_cloud_endpoint();
         }
-        if self.ai.keyhanstudio.endpoint.trim_end_matches('/') == "https://api.keyhan.info/ai/chat" {
+        if self.ai.keyhanstudio.endpoint.trim_end_matches('/') == "https://api.keyhan.info/ai/chat"
+        {
             self.ai.keyhanstudio.endpoint = "https://core.keyhan.info/audiomaster/advice".into();
         }
     }
